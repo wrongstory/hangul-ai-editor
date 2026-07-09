@@ -26,6 +26,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { Editor, JSONContent } from "@tiptap/core";
+import { Fragment, Slice } from "@tiptap/pm/model";
+import type { Node as ProseMirrorNode, Schema } from "@tiptap/pm/model";
 import StarterKit from "@tiptap/starter-kit";
 import { createMockProposal } from "./ai/mockAi";
 import { parseHwpxFile } from "./hwpx/parseHwpx";
@@ -126,6 +128,28 @@ export function App() {
       attributes: {
         class: "tiptap-document",
         "aria-label": "문서 본문",
+      },
+      handlePaste(view, event) {
+        const plainText = event.clipboardData?.getData("text/plain");
+
+        if (!plainText) {
+          return false;
+        }
+
+        const pastedNodes = plainTextToParagraphNodes(plainText, view.state.schema);
+
+        if (pastedNodes.length === 0) {
+          return false;
+        }
+
+        event.preventDefault();
+        view.dispatch(
+          view.state.tr
+            .replaceSelection(new Slice(Fragment.fromArray(pastedNodes), 0, 0))
+            .scrollIntoView()
+        );
+
+        return true;
       },
     },
     onUpdate: ({ editor: currentEditor }) => {
@@ -714,6 +738,29 @@ function tiptapDocumentToBlocks(
           text: "",
         },
       ];
+}
+
+function plainTextToParagraphNodes(
+  value: string,
+  schema: Schema
+): ProseMirrorNode[] {
+  return normalizePastedText(value)
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line, index, lines) => line.length > 0 || index < lines.length - 1)
+    .map((line) =>
+      schema.nodes.paragraph.create(
+        undefined,
+        line.length > 0 ? schema.text(line) : undefined
+      )
+    );
+}
+
+function normalizePastedText(value: string): string {
+  return value
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/\t/g, "  ");
 }
 
 function getTiptapNodeText(node: JSONContent): string {
