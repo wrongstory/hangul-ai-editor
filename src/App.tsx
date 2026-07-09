@@ -53,6 +53,7 @@ export function App() {
   const [changeHistory, setChangeHistory] = useState<ChangeHistoryEntry[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const blockElementRefs = useRef(new Map<string, HTMLElement>());
+  const pendingCaretPlacementRef = useRef<"start" | "end" | null>(null);
 
   const activeBlock = useMemo(
     () => documentState.blocks.find((block) => block.id === activeBlockId),
@@ -78,6 +79,11 @@ export function App() {
     if (element && document.activeElement !== element) {
       element.focus();
     }
+
+    if (element && pendingCaretPlacementRef.current) {
+      setCaretPosition(element, pendingCaretPlacementRef.current);
+      pendingCaretPlacementRef.current = null;
+    }
   }, [activeBlockId]);
 
   function updateBlockText(blockId: string, text: string) {
@@ -98,7 +104,7 @@ export function App() {
     }));
   }
 
-  function insertParagraphAfter(blockId: string) {
+  function insertParagraphAfter(blockId: string, beforeText?: string, afterText = "") {
     const nextBlockId = crypto.randomUUID();
 
     setDocumentState((current) => {
@@ -109,10 +115,14 @@ export function App() {
       }
 
       const nextBlocks = [...current.blocks];
+      nextBlocks[blockIndex] = {
+        ...nextBlocks[blockIndex],
+        text: beforeText ?? nextBlocks[blockIndex].text,
+      };
       nextBlocks.splice(blockIndex + 1, 0, {
         id: nextBlockId,
         type: "paragraph",
-        text: "",
+        text: afterText,
       });
 
       return {
@@ -120,6 +130,7 @@ export function App() {
         blocks: nextBlocks,
       };
     });
+    pendingCaretPlacementRef.current = "start";
     setActiveBlockId(nextBlockId);
   }
 
@@ -399,7 +410,9 @@ export function App() {
                     active={block.id === activeBlockId}
                     onFocus={() => setActiveBlockId(block.id)}
                     onChange={(text) => updateBlockText(block.id, text)}
-                    onInsertAfter={() => insertParagraphAfter(block.id)}
+                    onInsertAfter={(beforeText, afterText) =>
+                      insertParagraphAfter(block.id, beforeText, afterText)
+                    }
                     onRemoveEmpty={() => removeOrMergeEmptyBlock(block.id)}
                     registerElement={(element) => {
                       if (element) {
@@ -562,6 +575,36 @@ function isInputComposing(event: Event): boolean {
   return "isComposing" in event && event.isComposing === true;
 }
 
+function getCaretTextOffset(element: HTMLElement): number {
+  const selection = window.getSelection();
+
+  if (!selection || selection.rangeCount === 0) {
+    return element.textContent?.length ?? 0;
+  }
+
+  const range = selection.getRangeAt(0);
+
+  if (!element.contains(range.startContainer)) {
+    return element.textContent?.length ?? 0;
+  }
+
+  const preCaretRange = range.cloneRange();
+  preCaretRange.selectNodeContents(element);
+  preCaretRange.setEnd(range.startContainer, range.startOffset);
+
+  return preCaretRange.toString().length;
+}
+
+function setCaretPosition(element: HTMLElement, placement: "start" | "end") {
+  const selection = window.getSelection();
+  const range = document.createRange();
+
+  range.selectNodeContents(element);
+  range.collapse(placement === "start");
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
 function getDocumentSignature(blocks: DocumentBlock[]): string {
   return blocks
     .map((block) => `${block.id}:${block.type}:${block.text}`)
@@ -712,7 +755,7 @@ type DocumentBlockEditorProps = {
   active: boolean;
   onFocus: () => void;
   onChange: (text: string) => void;
-  onInsertAfter: () => void;
+  onInsertAfter: (beforeText: string, afterText: string) => void;
   onRemoveEmpty: () => void;
   registerElement: (element: HTMLElement | null) => void;
 };
@@ -790,7 +833,13 @@ function DocumentBlockEditor({
 
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
-        onInsertAfter();
+        const currentText = event.currentTarget.textContent ?? "";
+        const splitOffset = getCaretTextOffset(event.currentTarget);
+
+        onInsertAfter(
+          currentText.slice(0, splitOffset),
+          currentText.slice(splitOffset)
+        );
       }
 
       if (event.key === "Backspace" && block.text.trim().length === 0) {
