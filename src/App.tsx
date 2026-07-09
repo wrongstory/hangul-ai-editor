@@ -22,8 +22,8 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CompositionEvent, FormEvent, KeyboardEvent } from "react";
 import { createMockProposal } from "./ai/mockAi";
 import { parseHwpxFile } from "./hwpx/parseHwpx";
 import { initialDocument } from "./mockDocument";
@@ -558,6 +558,10 @@ function convertBlockStyle(block: DocumentBlock, style: BlockStyle): DocumentBlo
   };
 }
 
+function isInputComposing(event: Event): boolean {
+  return "isComposing" in event && event.isComposing === true;
+}
+
 function getDocumentSignature(blocks: DocumentBlock[]): string {
   return blocks
     .map((block) => `${block.id}:${block.type}:${block.text}`)
@@ -722,23 +726,68 @@ function DocumentBlockEditor({
   onRemoveEmpty,
   registerElement,
 }: DocumentBlockEditorProps) {
+  const elementRef = useRef<HTMLElement | null>(null);
+  const isComposingRef = useRef(false);
   const className = [
     "document-block",
     block.type,
     active ? "active" : "",
   ].join(" ");
+  const setElementRef = useCallback(
+    (element: HTMLElement | null) => {
+      elementRef.current = element;
+      registerElement(element);
+    },
+    [registerElement]
+  );
+
+  useEffect(() => {
+    const element = elementRef.current;
+
+    if (
+      element &&
+      document.activeElement !== element &&
+      !isComposingRef.current &&
+      element.textContent !== block.text
+    ) {
+      element.textContent = block.text;
+    }
+  }, [block.text]);
+
+  function commitText(element: HTMLElement) {
+    onChange(element.textContent ?? "");
+  }
+
   const editableProps = {
     className,
     contentEditable: true,
-    ref: registerElement,
+    ref: setElementRef,
     suppressContentEditableWarning: true,
     spellCheck: false,
     onFocus,
     onClick: onFocus,
     onInput: (event: FormEvent<HTMLElement>) => {
-      onChange(event.currentTarget.textContent ?? "");
+      if (isComposingRef.current || isInputComposing(event.nativeEvent)) {
+        return;
+      }
+
+      commitText(event.currentTarget);
+    },
+    onCompositionStart: () => {
+      isComposingRef.current = true;
+    },
+    onCompositionEnd: (event: CompositionEvent<HTMLElement>) => {
+      isComposingRef.current = false;
+      commitText(event.currentTarget);
+    },
+    onBlur: (event: FormEvent<HTMLElement>) => {
+      commitText(event.currentTarget);
     },
     onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+      if (event.nativeEvent.isComposing) {
+        return;
+      }
+
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         onInsertAfter();
@@ -752,18 +801,18 @@ function DocumentBlockEditor({
   };
 
   if (block.type === "heading" && block.level === 1) {
-    return <h1 {...editableProps}>{block.text}</h1>;
+    return <h1 {...editableProps} />;
   }
 
   if (block.type === "heading" && block.level === 2) {
-    return <h2 {...editableProps}>{block.text}</h2>;
+    return <h2 {...editableProps} />;
   }
 
   if (block.type === "heading" && block.level === 3) {
-    return <h3 {...editableProps}>{block.text}</h3>;
+    return <h3 {...editableProps} />;
   }
 
   return (
-    <p {...editableProps}>{block.text}</p>
+    <p {...editableProps} />
   );
 }
