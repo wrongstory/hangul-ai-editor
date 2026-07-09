@@ -22,8 +22,10 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CompositionEvent, FormEvent, KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { EditorContent, useEditor } from "@tiptap/react";
+import type { Editor, JSONContent } from "@tiptap/core";
+import StarterKit from "@tiptap/starter-kit";
 import { createMockProposal } from "./ai/mockAi";
 import { parseHwpxFile } from "./hwpx/parseHwpx";
 import { initialDocument } from "./mockDocument";
@@ -36,11 +38,12 @@ import type {
   HangulDocument,
 } from "./types";
 
-type CaretPlacement = "start" | "end" | number;
-
 export function App() {
   const [documentState, setDocumentState] = useState<HangulDocument>(initialDocument);
   const [activeBlockId, setActiveBlockId] = useState<string>(initialDocument.blocks[1].id);
+  const [activeBlockStyle, setActiveBlockStyle] = useState<BlockStyle>(
+    getBlockStyle(initialDocument.blocks[1])
+  );
   const [fileStatus, setFileStatus] = useState("샘플 문서로 시작됨");
   const [isOpeningFile, setIsOpeningFile] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -54,8 +57,8 @@ export function App() {
   const [proposal, setProposal] = useState<AiProposal | undefined>();
   const [changeHistory, setChangeHistory] = useState<ChangeHistoryEntry[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const blockElementRefs = useRef(new Map<string, HTMLElement>());
-  const pendingCaretPlacementRef = useRef<CaretPlacement | null>(null);
+  const blocksRef = useRef<DocumentBlock[]>(initialDocument.blocks);
+  const editorSyncSignatureRef = useRef(getDocumentSignature(initialDocument.blocks));
 
   const activeBlock = useMemo(
     () => documentState.blocks.find((block) => block.id === activeBlockId),
@@ -73,115 +76,102 @@ export function App() {
     () => paginateBlocks(documentState.blocks),
     [documentState.blocks]
   );
-  const activeBlockStyle = activeBlock ? getBlockStyle(activeBlock) : "paragraph";
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({
+        heading: {
+          levels: [1, 2, 3],
+        },
+      }),
+    ],
+    content: blocksToTiptapDocument(initialDocument.blocks),
+    editorProps: {
+      attributes: {
+        class: "tiptap-document",
+        "aria-label": "문서 본문",
+      },
+    },
+    onUpdate: ({ editor: currentEditor }) => {
+      syncBlocksFromEditor(currentEditor);
+    },
+    onSelectionUpdate: ({ editor: currentEditor }) => {
+      syncActiveBlockFromEditor(currentEditor);
+    },
+    onCreate: ({ editor: currentEditor }) => {
+      syncActiveBlockFromEditor(currentEditor);
+    },
+  });
 
   useEffect(() => {
-    const element = blockElementRefs.current.get(activeBlockId);
+    blocksRef.current = documentState.blocks;
+  }, [documentState.blocks]);
 
-    if (element && document.activeElement !== element) {
-      element.focus();
+  useEffect(() => {
+    if (!editor) {
+      return;
     }
 
-    if (element && pendingCaretPlacementRef.current !== null) {
-      setCaretPosition(element, pendingCaretPlacementRef.current);
-      pendingCaretPlacementRef.current = null;
-    }
-  }, [activeBlockId]);
+    const nextSignature = getDocumentSignature(documentState.blocks);
 
-  function updateBlockText(blockId: string, text: string) {
+    if (nextSignature === editorSyncSignatureRef.current) {
+      return;
+    }
+
+    editorSyncSignatureRef.current = nextSignature;
+    editor.commands.setContent(blocksToTiptapDocument(documentState.blocks), {
+      emitUpdate: false,
+    });
+    syncActiveBlockFromEditor(editor);
+  }, [documentState.blocks, editor]);
+
+  function syncBlocksFromEditor(currentEditor: Editor) {
+    const nextBlocks = tiptapDocumentToBlocks(
+      currentEditor.getJSON(),
+      blocksRef.current
+    );
+
+    blocksRef.current = nextBlocks;
+    editorSyncSignatureRef.current = getDocumentSignature(nextBlocks);
+
     setDocumentState((current) => ({
       ...current,
-      blocks: current.blocks.map((block) =>
-        block.id === blockId ? { ...block, text } : block
-      ),
+      blocks: nextBlocks,
     }));
+    syncActiveBlockFromEditor(currentEditor, nextBlocks);
+  }
+
+  function syncActiveBlockFromEditor(
+    currentEditor: Editor,
+    blocks = blocksRef.current
+  ) {
+    const blockIndex = getEditorSelectionBlockIndex(currentEditor);
+    const block = blocks[blockIndex] ?? blocks[0];
+
+    if (!block) {
+      setActiveBlockStyle("paragraph");
+      return;
+    }
+
+    setActiveBlockId(block.id);
+    setActiveBlockStyle(getBlockStyle(block));
   }
 
   function updateActiveBlockStyle(style: BlockStyle) {
-    setDocumentState((current) => ({
-      ...current,
-      blocks: current.blocks.map((block) =>
-        block.id === activeBlockId ? convertBlockStyle(block, style) : block
-      ),
-    }));
-  }
+    if (!editor) {
+      return;
+    }
 
-  function insertParagraphAfter(blockId: string, beforeText?: string, afterText = "") {
-    const nextBlockId = crypto.randomUUID();
+    if (style === "paragraph") {
+      editor.chain().focus().setParagraph().run();
+    } else {
+      editor
+        .chain()
+        .focus()
+        .setHeading({ level: Number(style.replace("heading-", "")) as 1 | 2 | 3 })
+        .run();
+    }
 
-    setDocumentState((current) => {
-      const blockIndex = current.blocks.findIndex((block) => block.id === blockId);
-
-      if (blockIndex < 0) {
-        return current;
-      }
-
-      const nextBlocks = [...current.blocks];
-      nextBlocks[blockIndex] = {
-        ...nextBlocks[blockIndex],
-        text: beforeText ?? nextBlocks[blockIndex].text,
-      };
-      nextBlocks.splice(blockIndex + 1, 0, {
-        id: nextBlockId,
-        type: "paragraph",
-        text: afterText,
-      });
-
-      return {
-        ...current,
-        blocks: nextBlocks,
-      };
-    });
-    pendingCaretPlacementRef.current = "start";
-    setActiveBlockId(nextBlockId);
-  }
-
-  function mergeOrRemoveBlockAtStart(blockId: string, currentText: string) {
-    let nextActiveBlockId = blockId;
-    let nextCaretPlacement: CaretPlacement | null = null;
-
-    setDocumentState((current) => {
-      const blockIndex = current.blocks.findIndex((block) => block.id === blockId);
-      const block = current.blocks[blockIndex];
-
-      if (!block || current.blocks.length === 1) {
-        return current;
-      }
-
-      const previousBlock = current.blocks[blockIndex - 1];
-      const nextBlock = current.blocks[blockIndex + 1];
-
-      if (previousBlock) {
-        const previousText = previousBlock.text;
-        nextActiveBlockId = previousBlock.id;
-        nextCaretPlacement = previousText.length;
-
-        return {
-          ...current,
-          blocks: current.blocks
-            .map((item) =>
-              item.id === previousBlock.id
-                ? { ...item, text: `${previousText}${currentText}` }
-                : item
-            )
-            .filter((item) => item.id !== blockId),
-        };
-      }
-
-      if (currentText.trim().length > 0 || !nextBlock) {
-        return current;
-      }
-
-      nextActiveBlockId = nextBlock.id;
-      nextCaretPlacement = "start";
-
-      return {
-        ...current,
-        blocks: current.blocks.filter((item) => item.id !== blockId),
-      };
-    });
-    pendingCaretPlacementRef.current = nextCaretPlacement;
-    setActiveBlockId(nextActiveBlockId);
+    setActiveBlockStyle(style);
   }
 
   async function openHwpxFile(file: File | undefined) {
@@ -415,49 +405,26 @@ export function App() {
         </div>
 
         <div className="document-workbench">
-          {documentPages.map((page, pageIndex) => (
-            <div className="page-sheet" key={pageIndex}>
-              <header className="page-title-row">
-                <div>
-                  <span className="eyebrow">HWPX Draft</span>
-                  <h1>{documentState.title}</h1>
-                  <p className="file-status">{fileStatus}</p>
-                </div>
-                <div className="format-badge">
-                  <FileText size={15} aria-hidden="true" />
-                  {documentState.sourceFormat.toUpperCase()}
-                </div>
-              </header>
-
-              <div className="editor-surface">
-                {page.map((block) => (
-                  <DocumentBlockEditor
-                    key={block.id}
-                    block={block}
-                    active={block.id === activeBlockId}
-                    onFocus={() => setActiveBlockId(block.id)}
-                    onChange={(text) => updateBlockText(block.id, text)}
-                    onInsertAfter={(beforeText, afterText) =>
-                      insertParagraphAfter(block.id, beforeText, afterText)
-                    }
-                    onBackspaceAtStart={(currentText) =>
-                      mergeOrRemoveBlockAtStart(block.id, currentText)
-                    }
-                    registerElement={(element) => {
-                      if (element) {
-                        blockElementRefs.current.set(block.id, element);
-                      } else {
-                        blockElementRefs.current.delete(block.id);
-                      }
-                    }}
-                  />
-                ))}
+          <div className="page-sheet tiptap-page">
+            <header className="page-title-row">
+              <div>
+                <span className="eyebrow">HWPX Draft</span>
+                <h1>{documentState.title}</h1>
+                <p className="file-status">{fileStatus}</p>
               </div>
-              <footer className="page-footer" aria-label={`페이지 ${pageIndex + 1}`}>
-                {pageIndex + 1} / {documentPages.length}
-              </footer>
+              <div className="format-badge">
+                <FileText size={15} aria-hidden="true" />
+                {documentState.sourceFormat.toUpperCase()}
+              </div>
+            </header>
+
+            <div className="editor-surface">
+              <EditorContent editor={editor} />
             </div>
-          ))}
+            <footer className="page-footer" aria-label="페이지 1">
+              1 / {documentPages.length}
+            </footer>
+          </div>
         </div>
       </section>
 
@@ -583,83 +550,98 @@ function getBlockStyle(block: DocumentBlock): BlockStyle {
   return "paragraph";
 }
 
-function convertBlockStyle(block: DocumentBlock, style: BlockStyle): DocumentBlock {
-  if (style === "paragraph") {
-    return {
-      id: block.id,
-      type: "paragraph",
-      text: block.text,
-    };
-  }
-
-  return {
-    id: block.id,
-    type: "heading",
-    level: Number(style.replace("heading-", "")) as 1 | 2 | 3,
-    text: block.text,
-  };
-}
-
-function isInputComposing(event: Event): boolean {
-  return "isComposing" in event && event.isComposing === true;
-}
-
-function getCaretTextOffset(element: HTMLElement): number {
-  const selection = window.getSelection();
-
-  if (!selection || selection.rangeCount === 0) {
-    return element.textContent?.length ?? 0;
-  }
-
-  const range = selection.getRangeAt(0);
-
-  if (!element.contains(range.startContainer)) {
-    return element.textContent?.length ?? 0;
-  }
-
-  const preCaretRange = range.cloneRange();
-  preCaretRange.selectNodeContents(element);
-  preCaretRange.setEnd(range.startContainer, range.startOffset);
-
-  return preCaretRange.toString().length;
-}
-
-function setCaretPosition(element: HTMLElement, placement: CaretPlacement) {
-  const selection = window.getSelection();
-  const range = document.createRange();
-
-  if (typeof placement === "number") {
-    const targetOffset = Math.max(0, placement);
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-    let remainingOffset = targetOffset;
-    let textNode = walker.nextNode();
-
-    while (textNode) {
-      const textLength = textNode.textContent?.length ?? 0;
-
-      if (remainingOffset <= textLength) {
-        range.setStart(textNode, remainingOffset);
-        range.collapse(true);
-        selection?.removeAllRanges();
-        selection?.addRange(range);
-        return;
-      }
-
-      remainingOffset -= textLength;
-      textNode = walker.nextNode();
-    }
-  }
-
-  range.selectNodeContents(element);
-  range.collapse(placement === "start");
-  selection?.removeAllRanges();
-  selection?.addRange(range);
-}
-
 function getDocumentSignature(blocks: DocumentBlock[]): string {
   return blocks
     .map((block) => `${block.id}:${block.type}:${block.text}`)
     .join("\n");
+}
+
+function blocksToTiptapDocument(blocks: DocumentBlock[]): JSONContent {
+  return {
+    type: "doc",
+    content: blocks.map((block) => {
+      const content = block.text
+        ? [
+            {
+              type: "text",
+              text: block.text,
+            },
+          ]
+        : undefined;
+
+      if (block.type === "heading") {
+        return {
+          type: "heading",
+          attrs: {
+            level: block.level,
+          },
+          content,
+        };
+      }
+
+      return {
+        type: "paragraph",
+        content,
+      };
+    }),
+  };
+}
+
+function tiptapDocumentToBlocks(
+  documentJson: JSONContent,
+  previousBlocks: DocumentBlock[]
+): DocumentBlock[] {
+  const content = documentJson.content ?? [];
+  const blocks = content
+    .filter((node) => node.type === "heading" || node.type === "paragraph")
+    .map((node, index): DocumentBlock => {
+      const previousBlock = previousBlocks[index];
+      const id = previousBlock?.id ?? crypto.randomUUID();
+      const text = getTiptapNodeText(node);
+
+      if (node.type === "heading") {
+        const level = normalizeHeadingLevel(node.attrs?.level);
+
+        return {
+          id,
+          type: "heading",
+          level,
+          text,
+        };
+      }
+
+      return {
+        id,
+        type: "paragraph",
+        text,
+      };
+    });
+
+  return blocks.length > 0
+    ? blocks
+    : [
+        {
+          id: previousBlocks[0]?.id ?? crypto.randomUUID(),
+          type: "paragraph",
+          text: "",
+        },
+      ];
+}
+
+function getTiptapNodeText(node: JSONContent): string {
+  if (typeof node.text === "string") {
+    return node.text;
+  }
+
+  return (node.content ?? []).map(getTiptapNodeText).join("");
+}
+
+function normalizeHeadingLevel(value: unknown): 1 | 2 | 3 {
+  return value === 1 || value === 2 || value === 3 ? value : 1;
+}
+
+function getEditorSelectionBlockIndex(editor: Editor): number {
+  return Math.max(0, editor.state.selection.$from.index(0));
 }
 
 function paginateBlocks(blocks: DocumentBlock[]): DocumentBlock[][] {
@@ -798,124 +780,5 @@ function HangulShellHeader({ documentTitle }: { documentTitle: string }) {
         ))}
       </div>
     </header>
-  );
-}
-
-type DocumentBlockEditorProps = {
-  block: DocumentBlock;
-  active: boolean;
-  onFocus: () => void;
-  onChange: (text: string) => void;
-  onInsertAfter: (beforeText: string, afterText: string) => void;
-  onBackspaceAtStart: (currentText: string) => void;
-  registerElement: (element: HTMLElement | null) => void;
-};
-
-function DocumentBlockEditor({
-  block,
-  active,
-  onFocus,
-  onChange,
-  onInsertAfter,
-  onBackspaceAtStart,
-  registerElement,
-}: DocumentBlockEditorProps) {
-  const elementRef = useRef<HTMLElement | null>(null);
-  const isComposingRef = useRef(false);
-  const className = [
-    "document-block",
-    block.type,
-    active ? "active" : "",
-  ].join(" ");
-  const setElementRef = useCallback(
-    (element: HTMLElement | null) => {
-      elementRef.current = element;
-      registerElement(element);
-    },
-    [registerElement]
-  );
-
-  useEffect(() => {
-    const element = elementRef.current;
-
-    if (
-      element &&
-      (!active || document.activeElement !== element) &&
-      !isComposingRef.current &&
-      element.textContent !== block.text
-    ) {
-      element.textContent = block.text;
-    }
-  }, [active, block.text]);
-
-  function commitText(element: HTMLElement) {
-    onChange(element.textContent ?? "");
-  }
-
-  const editableProps = {
-    className,
-    contentEditable: true,
-    ref: setElementRef,
-    suppressContentEditableWarning: true,
-    spellCheck: false,
-    onFocus,
-    onClick: onFocus,
-    onInput: (event: FormEvent<HTMLElement>) => {
-      if (isComposingRef.current || isInputComposing(event.nativeEvent)) {
-        return;
-      }
-
-      commitText(event.currentTarget);
-    },
-    onCompositionStart: () => {
-      isComposingRef.current = true;
-    },
-    onCompositionEnd: (event: CompositionEvent<HTMLElement>) => {
-      isComposingRef.current = false;
-      commitText(event.currentTarget);
-    },
-    onBlur: (event: FormEvent<HTMLElement>) => {
-      commitText(event.currentTarget);
-    },
-    onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
-      if (event.nativeEvent.isComposing) {
-        return;
-      }
-
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        const currentText = event.currentTarget.textContent ?? "";
-        const splitOffset = getCaretTextOffset(event.currentTarget);
-
-        onInsertAfter(
-          currentText.slice(0, splitOffset),
-          currentText.slice(splitOffset)
-        );
-      }
-
-      if (
-        event.key === "Backspace" &&
-        getCaretTextOffset(event.currentTarget) === 0
-      ) {
-        event.preventDefault();
-        onBackspaceAtStart(event.currentTarget.textContent ?? "");
-      }
-    },
-  };
-
-  if (block.type === "heading" && block.level === 1) {
-    return <h1 {...editableProps} />;
-  }
-
-  if (block.type === "heading" && block.level === 2) {
-    return <h2 {...editableProps} />;
-  }
-
-  if (block.type === "heading" && block.level === 3) {
-    return <h3 {...editableProps} />;
-  }
-
-  return (
-    <p {...editableProps} />
   );
 }

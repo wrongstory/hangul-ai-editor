@@ -347,12 +347,77 @@ textarea {
   margin: 0;
   padding: 0;
   flex: 1;
-  overflow-y: hidden;
+  overflow-y: auto;
   overflow-x: hidden;
   border: 0;
   border-radius: 0;
   background: #ffffff;
   box-shadow: none;
+}
+
+.tiptap-page .editor-surface {
+  scrollbar-width: thin;
+}
+
+.tiptap-document {
+  min-height: 100%;
+  padding: 0;
+  color: #1d2430;
+  outline: 0;
+  white-space: pre-wrap;
+  word-break: keep-all;
+}
+
+.tiptap-document p,
+.tiptap-document h1,
+.tiptap-document h2,
+.tiptap-document h3 {
+  margin: 0;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+}
+
+.tiptap-document p {
+  min-height: 30px;
+  margin: 2px 0;
+  font-size: 16px;
+  line-height: 2;
+  text-align: left;
+}
+
+.tiptap-document h1,
+.tiptap-document h2,
+.tiptap-document h3 {
+  margin: 18px 0 10px;
+  font-weight: 800;
+  line-height: 1.55;
+}
+
+.tiptap-document h1:first-child,
+.tiptap-document h2:first-child,
+.tiptap-document h3:first-child {
+  margin-top: 0;
+}
+
+.tiptap-document h1 {
+  font-size: 22px;
+}
+
+.tiptap-document h2 {
+  font-size: 19px;
+}
+
+.tiptap-document h3 {
+  font-size: 17px;
+}
+
+.tiptap-document .is-empty::before {
+  float: left;
+  height: 0;
+  color: #a4aaa7;
+  content: " ";
+  pointer-events: none;
 }
 
 .page-footer {
