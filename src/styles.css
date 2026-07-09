@@ -389,6 +389,42 @@ textarea {
   font-size: 13px;
 }
 
+.workflow-status {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #44514d;
+  border-radius: 8px;
+  background: #202a27;
+}
+
+.workflow-status strong {
+  display: block;
+  color: #f7fbf9;
+  font-size: 14px;
+}
+
+.workflow-status p,
+.proposal .proposal-meta p {
+  display: -webkit-box;
+  margin: 4px 0 0;
+  overflow: hidden;
+  color: #b9c7c1;
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.history-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  gap: 10px;
+  align-items: center;
+  padding-top: 10px;
+  border-top: 1px solid #3a4642;
+}
+
 .chat-log {
   display: flex;
   min-height: 160px;
@@ -430,11 +466,39 @@ textarea {
   padding: 14px;
 }
 
+.proposal-meta {
+  padding-bottom: 12px;
+  border-bottom: 1px solid #44514d;
+}
+
+.proposal-meta span {
+  color: #9fe0b9;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.proposal-meta strong {
+  display: block;
+  margin-top: 4px;
+  color: #f7fbf9;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
 .proposal p {
   margin: 0;
   color: #f8fbfa;
   font-size: 14px;
   line-height: 1.55;
+}
+
+.proposal .proposal-warning {
+  padding: 10px 12px;
+  border: 1px solid #d9a85d;
+  border-radius: 6px;
+  color: #22180b;
+  background: #ffe4b2;
+  font-size: 13px;
 }
 
 .proposal-actions {
@@ -452,6 +516,11 @@ textarea {
   color: #f6fbf8;
   background: #3a4642;
   cursor: pointer;
+}
+
+.icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .icon-button.apply {
@@ -526,4 +595,3 @@ textarea {
     padding: 42px 24px;
   }
 }
-
