@@ -176,6 +176,11 @@ textarea {
   cursor: pointer;
 }
 
+.quick-toolbar button:disabled {
+  cursor: progress;
+  opacity: 0.55;
+}
+
 .quick-toolbar button:hover {
   border-color: #9fb9da;
   background: #eaf2ff;
@@ -210,6 +215,16 @@ textarea {
   height: 18px;
   margin: 0 4px;
   background: #c4c4c4;
+}
+
+.file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .ruler {
@@ -275,6 +290,13 @@ textarea {
 .page-title-row h1 {
   font-size: 23px;
   line-height: 1.35;
+}
+
+.file-status {
+  margin: 8px 0 0;
+  color: #6d7773;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .eyebrow {
@@ -526,4 +548,3 @@ textarea {
     padding: 42px 24px;
   }
 }
-
