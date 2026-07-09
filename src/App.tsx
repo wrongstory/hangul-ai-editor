@@ -22,8 +22,9 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { createMockProposal } from "./ai/mockAi";
+import { parseHwpxFile } from "./hwpx/parseHwpx";
 import { initialDocument } from "./mockDocument";
 import type {
   AiProposal,
@@ -36,6 +37,8 @@ import type {
 export function App() {
   const [documentState, setDocumentState] = useState<HangulDocument>(initialDocument);
   const [selectedBlockId, setSelectedBlockId] = useState<string>(initialDocument.blocks[1].id);
+  const [fileStatus, setFileStatus] = useState("샘플 문서로 시작됨");
+  const [isOpeningFile, setIsOpeningFile] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "welcome",
@@ -46,6 +49,7 @@ export function App() {
   const [prompt, setPrompt] = useState("");
   const [proposal, setProposal] = useState<AiProposal | undefined>();
   const [changeHistory, setChangeHistory] = useState<ChangeHistoryEntry[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedBlock = useMemo(
     () => documentState.blocks.find((block) => block.id === selectedBlockId),
@@ -69,6 +73,58 @@ export function App() {
         block.id === blockId ? { ...block, text } : block
       ),
     }));
+  }
+
+  async function openHwpxFile(file: File | undefined) {
+    if (!file) {
+      return;
+    }
+
+    if (!file.name.toLowerCase().endsWith(".hwpx")) {
+      setFileStatus("지원하지 않는 파일입니다. .hwpx 파일을 선택해 주세요.");
+      return;
+    }
+
+    setIsOpeningFile(true);
+    setFileStatus(`${file.name} 여는 중...`);
+
+    try {
+      const nextDocument = await parseHwpxFile(file);
+      setDocumentState(nextDocument);
+      setSelectedBlockId(nextDocument.blocks[0].id);
+      setProposal(undefined);
+      setChangeHistory([]);
+      setFileStatus(`${file.name}에서 ${nextDocument.blocks.length}개 문단을 불러왔습니다.`);
+      setMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: "system",
+          content: `${file.name} 파일을 열었습니다. 문단을 선택해 AI 편집을 요청할 수 있습니다.`,
+        },
+      ]);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "HWPX 파일을 여는 중 오류가 발생했습니다.";
+
+      setFileStatus(message);
+      setMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: "system",
+          content: message,
+        },
+      ]);
+    } finally {
+      setIsOpeningFile(false);
+
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
   }
 
   function submitPrompt() {
@@ -179,9 +235,24 @@ export function App() {
           <button type="button" title="새 문서">
             <FileText size={15} aria-hidden="true" />
           </button>
-          <button type="button" title="불러오기">
+          <button
+            type="button"
+            title="HWPX 불러오기"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isOpeningFile}
+          >
             <FolderOpen size={15} aria-hidden="true" />
           </button>
+          <input
+            ref={fileInputRef}
+            className="file-input"
+            type="file"
+            accept=".hwpx,application/zip"
+            aria-label="HWPX 파일 선택"
+            onChange={(event) => {
+              void openHwpxFile(event.target.files?.[0]);
+            }}
+          />
           <button type="button" title="저장">
             <Save size={15} aria-hidden="true" />
           </button>
@@ -227,6 +298,7 @@ export function App() {
               <div>
                 <span className="eyebrow">HWPX Draft</span>
                 <h1>{documentState.title}</h1>
+                <p className="file-status">{fileStatus}</p>
               </div>
               <div className="format-badge">
                 <FileText size={15} aria-hidden="true" />
