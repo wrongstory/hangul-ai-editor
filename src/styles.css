@@ -197,6 +197,13 @@ textarea {
   background: #eaf2ff;
 }
 
+.quick-toolbar button.active,
+.quick-toolbar button[aria-pressed="true"] {
+  border-color: #6d93c5;
+  color: #173f70;
+  background: #dcecff;
+}
+
 .quick-toolbar select,
 .quick-toolbar input {
   height: 22px;

@@ -2,6 +2,7 @@ import {
   AlignJustify,
   AlignLeft,
   BarChart3,
+  Bold,
   Check,
   Clipboard,
   Columns3,
@@ -9,6 +10,7 @@ import {
   FileText,
   FolderOpen,
   Image,
+  Italic,
   Layout,
   Lock,
   MessageSquareText,
@@ -19,12 +21,14 @@ import {
   Search,
   Table,
   Type,
+  Underline,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
+import { Mark, mergeAttributes } from "@tiptap/core";
 import type { Editor, JSONContent } from "@tiptap/core";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import type { Node as ProseMirrorNode, Schema } from "@tiptap/pm/model";
@@ -51,6 +55,28 @@ type PageSettings = {
   marginPreset: PageMarginPreset;
 };
 
+type InlineFormattingState = {
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+};
+
+const UnderlineMark = Mark.create({
+  name: "underline",
+
+  parseHTML() {
+    return [
+      { tag: "u" },
+      { style: "text-decoration-line=underline" },
+      { style: "text-decoration=underline" },
+    ];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ["u", mergeAttributes(HTMLAttributes), 0];
+  },
+});
+
 const paperSizeOptions: Record<PaperSize, { label: string; width: number; height: number }> = {
   a4: { label: "A4", width: 820, height: 1040 },
   b5: { label: "B5", width: 710, height: 1000 },
@@ -69,6 +95,11 @@ export function App() {
   const [activeBlockStyle, setActiveBlockStyle] = useState<BlockStyle>(
     getBlockStyle(initialDocument.blocks[1])
   );
+  const [inlineFormatting, setInlineFormatting] = useState<InlineFormattingState>({
+    bold: false,
+    italic: false,
+    underline: false,
+  });
   const [pageSettings, setPageSettings] = useState<PageSettings>({
     paperSize: "a4",
     orientation: "portrait",
@@ -122,6 +153,7 @@ export function App() {
           levels: [1, 2, 3],
         },
       }),
+      UnderlineMark,
     ],
     content: blocksToTiptapDocument(initialDocument.blocks),
     editorProps: {
@@ -157,9 +189,11 @@ export function App() {
     },
     onSelectionUpdate: ({ editor: currentEditor }) => {
       syncActiveBlockFromEditor(currentEditor);
+      syncInlineFormattingFromEditor(currentEditor);
     },
     onCreate: ({ editor: currentEditor }) => {
       syncActiveBlockFromEditor(currentEditor);
+      syncInlineFormattingFromEditor(currentEditor);
     },
   });
 
@@ -183,6 +217,7 @@ export function App() {
       emitUpdate: false,
     });
     syncActiveBlockFromEditor(editor);
+    syncInlineFormattingFromEditor(editor);
   }, [documentState.blocks, editor]);
 
   function syncBlocksFromEditor(currentEditor: Editor) {
@@ -199,6 +234,7 @@ export function App() {
       blocks: nextBlocks,
     }));
     syncActiveBlockFromEditor(currentEditor, nextBlocks);
+    syncInlineFormattingFromEditor(currentEditor);
   }
 
   function syncActiveBlockFromEditor(
@@ -215,6 +251,23 @@ export function App() {
 
     setActiveBlockId(block.id);
     setActiveBlockStyle(getBlockStyle(block));
+  }
+
+  function syncInlineFormattingFromEditor(currentEditor: Editor) {
+    setInlineFormatting({
+      bold: currentEditor.isActive("bold"),
+      italic: currentEditor.isActive("italic"),
+      underline: currentEditor.isActive("underline"),
+    });
+  }
+
+  function toggleInlineFormatting(mark: keyof InlineFormattingState) {
+    if (!editor) {
+      return;
+    }
+
+    editor.chain().focus().toggleMark(mark).run();
+    syncInlineFormattingFromEditor(editor);
   }
 
   function updateActiveBlockStyle(style: BlockStyle) {
@@ -445,6 +498,33 @@ export function App() {
           </select>
           <input aria-label="글자 크기" defaultValue="14.0" />
           <span className="unit-label">pt</span>
+          <button
+            className={inlineFormatting.bold ? "active" : ""}
+            type="button"
+            title="굵게"
+            aria-pressed={inlineFormatting.bold}
+            onClick={() => toggleInlineFormatting("bold")}
+          >
+            <Bold size={15} aria-hidden="true" />
+          </button>
+          <button
+            className={inlineFormatting.italic ? "active" : ""}
+            type="button"
+            title="기울임"
+            aria-pressed={inlineFormatting.italic}
+            onClick={() => toggleInlineFormatting("italic")}
+          >
+            <Italic size={15} aria-hidden="true" />
+          </button>
+          <button
+            className={inlineFormatting.underline ? "active" : ""}
+            type="button"
+            title="밑줄"
+            aria-pressed={inlineFormatting.underline}
+            onClick={() => toggleInlineFormatting("underline")}
+          >
+            <Underline size={15} aria-hidden="true" />
+          </button>
           <button type="button" title="왼쪽 정렬">
             <AlignLeft size={15} aria-hidden="true" />
           </button>
