@@ -64,6 +64,10 @@ export function App() {
     proposal !== undefined &&
     getDocumentSignature(proposal.beforeBlocks) !== currentDocumentSignature;
   const latestChange = changeHistory[0];
+  const documentPages = useMemo(
+    () => paginateBlocks(documentState.blocks),
+    [documentState.blocks]
+  );
 
   function updateBlockText(blockId: string, text: string) {
     setDocumentState((current) => ({
@@ -298,31 +302,36 @@ export function App() {
         </div>
 
         <div className="document-workbench">
-          <div className="page-sheet">
-            <header className="page-title-row">
-              <div>
-                <span className="eyebrow">HWPX Draft</span>
-                <h1>{documentState.title}</h1>
-                <p className="file-status">{fileStatus}</p>
-              </div>
-              <div className="format-badge">
-                <FileText size={15} aria-hidden="true" />
-                {documentState.sourceFormat.toUpperCase()}
-              </div>
-            </header>
+          {documentPages.map((page, pageIndex) => (
+            <div className="page-sheet" key={pageIndex}>
+              <header className="page-title-row">
+                <div>
+                  <span className="eyebrow">HWPX Draft</span>
+                  <h1>{documentState.title}</h1>
+                  <p className="file-status">{fileStatus}</p>
+                </div>
+                <div className="format-badge">
+                  <FileText size={15} aria-hidden="true" />
+                  {documentState.sourceFormat.toUpperCase()}
+                </div>
+              </header>
 
-            <div className="editor-surface">
-              {documentState.blocks.map((block) => (
-                <DocumentBlockEditor
-                  key={block.id}
-                  block={block}
-                  active={block.id === activeBlockId}
-                  onFocus={() => setActiveBlockId(block.id)}
-                  onChange={(text) => updateBlockText(block.id, text)}
-                />
-              ))}
+              <div className="editor-surface">
+                {page.map((block) => (
+                  <DocumentBlockEditor
+                    key={block.id}
+                    block={block}
+                    active={block.id === activeBlockId}
+                    onFocus={() => setActiveBlockId(block.id)}
+                    onChange={(text) => updateBlockText(block.id, text)}
+                  />
+                ))}
+              </div>
+              <footer className="page-footer" aria-label={`페이지 ${pageIndex + 1}`}>
+                {pageIndex + 1} / {documentPages.length}
+              </footer>
             </div>
-          </div>
+          ))}
         </div>
       </section>
 
@@ -444,6 +453,41 @@ function getDocumentSignature(blocks: DocumentBlock[]): string {
   return blocks
     .map((block) => `${block.id}:${block.type}:${block.text}`)
     .join("\n");
+}
+
+function paginateBlocks(blocks: DocumentBlock[]): DocumentBlock[][] {
+  const pages: DocumentBlock[][] = [];
+  let currentPage: DocumentBlock[] = [];
+  let currentWeight = 0;
+
+  for (const block of blocks) {
+    const weight = getBlockPageWeight(block);
+
+    if (currentPage.length > 0 && currentWeight + weight > 34) {
+      pages.push(currentPage);
+      currentPage = [];
+      currentWeight = 0;
+    }
+
+    currentPage.push(block);
+    currentWeight += weight;
+  }
+
+  if (currentPage.length > 0) {
+    pages.push(currentPage);
+  }
+
+  return pages.length > 0 ? pages : [[]];
+}
+
+function getBlockPageWeight(block: DocumentBlock): number {
+  const textLines = Math.max(1, Math.ceil(block.text.length / 38));
+
+  if (block.type === "heading") {
+    return block.level === 1 ? textLines + 4 : textLines + 3;
+  }
+
+  return textLines + 1;
 }
 
 function formatAppliedTime(value: string): string {
