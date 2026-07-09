@@ -2,7 +2,7 @@
 
 한글 문서 계열을 AI로 편집하고 검토하는 데스크톱 문서 작업 환경을 만들기 위한 프로젝트입니다.
 
-이 저장소는 Tauri + React + TypeScript 기반 앱으로 초기화되었습니다. GitHub 저장소 연결과 원격 default branch 설정은 사용자 승인 후 별도 진행합니다.
+이 저장소는 Tauri + React + TypeScript 기반 앱으로 초기화되었습니다. GitHub 저장소는 연결되어 있고, 원격 default branch는 `dev`입니다.
 
 ## Product Direction
 
@@ -24,6 +24,7 @@
 ## Current Status
 
 - Tauri + React + TypeScript 프로젝트 초기화 완료
+- GitHub `dev` default branch 설정 완료
 - Mock AI 사이드바 UI 구현 완료
 - Vite 개발 서버 실행 확인 완료
 - `lint`, `typecheck`, `build` 통과

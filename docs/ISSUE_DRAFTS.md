@@ -30,6 +30,7 @@ Track the completed initial project bootstrap and remaining repository setup tas
 - Added GitHub Actions CI workflow
 - Created local `main` and `dev` branches
 - Pushed `main` and `dev` to GitHub
+- Changed repository default branch from `main` to `dev`
 
 ## Verification
 
@@ -41,7 +42,6 @@ Track the completed initial project bootstrap and remaining repository setup tas
 
 ## Remaining
 
-- Change repository default branch from `main` to `dev`
 - Add branch protection rules
 - Confirm GitHub Actions status on pushed branches
 - Install Rust and verify Tauri desktop runtime
@@ -174,4 +174,3 @@ Install the missing Rust toolchain and verify the app runs as a Tauri desktop ap
 - Existing React UI renders in the desktop shell
 - No TypeScript, Vite, or Tauri startup errors remain
 ```
-
