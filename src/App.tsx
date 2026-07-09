@@ -840,13 +840,13 @@ function DocumentBlockEditor({
 
     if (
       element &&
-      document.activeElement !== element &&
+      (!active || document.activeElement !== element) &&
       !isComposingRef.current &&
       element.textContent !== block.text
     ) {
       element.textContent = block.text;
     }
-  }, [block.text]);
+  }, [active, block.text]);
 
   function commitText(element: HTMLElement) {
     onChange(element.textContent ?? "");
