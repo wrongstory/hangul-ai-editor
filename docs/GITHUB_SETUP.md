@@ -8,17 +8,18 @@ Repository: `wrongstory/hangul-ai-editor`
 - `main` has been pushed.
 - `dev` has been pushed.
 - Local `dev` tracks `origin/dev`.
-- GitHub repository default branch is still `main`.
+- GitHub repository default branch is `dev`.
 
-## Required Manual Repository Settings
+## Branch Policy
 
-Change the default branch to `dev`:
+- `dev` is the default development branch.
+- All implementation work should branch from `dev`.
+- `main` is reserved for release-ready versions only.
+- Do not develop directly on `main`.
 
-1. Open `https://github.com/wrongstory/hangul-ai-editor/settings/branches`.
-2. Under Default branch, change `main` to `dev`.
-3. Keep `main` as the release branch.
+## Recommended Repository Settings
 
-Recommended branch protection after default branch change:
+Recommended branch protection:
 
 - Protect `dev`.
 - Require CI checks before merge.
@@ -35,4 +36,3 @@ GitHub API error 403: Resource not accessible by integration
 ```
 
 Until issue-write permission is available, use the issue drafts in `docs/ISSUE_DRAFTS.md`.
-

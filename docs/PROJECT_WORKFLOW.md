@@ -14,11 +14,11 @@ Codex must not perform project initialization, remote repository creation, defau
 main
 - Stable release branch only.
 - No direct feature development.
-- Receives only verified release-ready changes from dev.
+- Receives only verified release-ready versions from dev.
 
 dev
 - Main development branch.
-- Preferred GitHub default branch after setup.
+- GitHub default branch.
 - All feature branches start from dev.
 
 feature/*
@@ -132,7 +132,6 @@ The following require explicit user approval:
 
 ## 8. Current Stage
 
-The project has not been initialized as an application yet.
+The project has been initialized as a Tauri + React + TypeScript + Vite application.
 
-Current work is limited to product direction and project workflow documentation.
-
+Current development should continue from `dev` through task branches, with `main` reserved for release-ready versions.
