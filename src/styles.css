@@ -167,6 +167,7 @@ textarea {
 .quick-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 4px;
   min-height: 29px;
   padding: 3px 16px;
@@ -280,12 +281,13 @@ textarea {
 .page-sheet {
   display: flex;
   flex-direction: column;
-  width: min(820px, calc(100% - 16px));
-  min-height: 1040px;
-  height: 1040px;
-  max-height: 1040px;
+  width: var(--page-width, 820px);
+  min-width: var(--page-width, 820px);
+  min-height: var(--page-height, 1040px);
+  height: var(--page-height, 1040px);
+  max-height: var(--page-height, 1040px);
   margin: 0 auto;
-  padding: 74px 76px;
+  padding: var(--page-padding-y, 74px) var(--page-padding-x, 76px);
   overflow: hidden;
   border: 1px solid #a9a9a9;
   background: #ffffff;

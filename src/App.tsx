@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import type { Editor, JSONContent } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
@@ -38,12 +39,39 @@ import type {
   HangulDocument,
 } from "./types";
 
+type PaperSize = "a4" | "b5" | "letter";
+type PageOrientation = "portrait" | "landscape";
+type PageMarginPreset = "normal" | "narrow" | "wide";
+
+type PageSettings = {
+  paperSize: PaperSize;
+  orientation: PageOrientation;
+  marginPreset: PageMarginPreset;
+};
+
+const paperSizeOptions: Record<PaperSize, { label: string; width: number; height: number }> = {
+  a4: { label: "A4", width: 820, height: 1040 },
+  b5: { label: "B5", width: 710, height: 1000 },
+  letter: { label: "Letter", width: 816, height: 1056 },
+};
+
+const pageMarginOptions: Record<PageMarginPreset, { label: string; x: number; y: number }> = {
+  normal: { label: "보통 여백", x: 76, y: 74 },
+  narrow: { label: "좁은 여백", x: 48, y: 48 },
+  wide: { label: "넓은 여백", x: 96, y: 86 },
+};
+
 export function App() {
   const [documentState, setDocumentState] = useState<HangulDocument>(initialDocument);
   const [activeBlockId, setActiveBlockId] = useState<string>(initialDocument.blocks[1].id);
   const [activeBlockStyle, setActiveBlockStyle] = useState<BlockStyle>(
     getBlockStyle(initialDocument.blocks[1])
   );
+  const [pageSettings, setPageSettings] = useState<PageSettings>({
+    paperSize: "a4",
+    orientation: "portrait",
+    marginPreset: "normal",
+  });
   const [fileStatus, setFileStatus] = useState("샘플 문서로 시작됨");
   const [isOpeningFile, setIsOpeningFile] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -75,6 +103,10 @@ export function App() {
   const documentPages = useMemo(
     () => paginateBlocks(documentState.blocks),
     [documentState.blocks]
+  );
+  const pageStyle = useMemo(
+    () => getPageStyle(pageSettings),
+    [pageSettings]
   );
   const editor = useEditor({
     extensions: [
@@ -396,6 +428,52 @@ export function App() {
             <option>160%</option>
             <option>200%</option>
           </select>
+          <span className="toolbar-separator" />
+          <select
+            aria-label="용지 크기"
+            value={pageSettings.paperSize}
+            onChange={(event) => {
+              setPageSettings((current) => ({
+                ...current,
+                paperSize: event.target.value as PaperSize,
+              }));
+            }}
+          >
+            {Object.entries(paperSizeOptions).map(([value, option]) => (
+              <option key={value} value={value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="용지 방향"
+            value={pageSettings.orientation}
+            onChange={(event) => {
+              setPageSettings((current) => ({
+                ...current,
+                orientation: event.target.value as PageOrientation,
+              }));
+            }}
+          >
+            <option value="portrait">세로</option>
+            <option value="landscape">가로</option>
+          </select>
+          <select
+            aria-label="쪽 여백"
+            value={pageSettings.marginPreset}
+            onChange={(event) => {
+              setPageSettings((current) => ({
+                ...current,
+                marginPreset: event.target.value as PageMarginPreset,
+              }));
+            }}
+          >
+            {Object.entries(pageMarginOptions).map(([value, option]) => (
+              <option key={value} value={value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="ruler" aria-hidden="true">
@@ -405,7 +483,7 @@ export function App() {
         </div>
 
         <div className="document-workbench">
-          <div className="page-sheet tiptap-page">
+          <div className="page-sheet tiptap-page" style={pageStyle}>
             <header className="page-title-row">
               <div>
                 <span className="eyebrow">HWPX Draft</span>
@@ -642,6 +720,21 @@ function normalizeHeadingLevel(value: unknown): 1 | 2 | 3 {
 
 function getEditorSelectionBlockIndex(editor: Editor): number {
   return Math.max(0, editor.state.selection.$from.index(0));
+}
+
+function getPageStyle(settings: PageSettings): CSSProperties {
+  const paper = paperSizeOptions[settings.paperSize];
+  const margin = pageMarginOptions[settings.marginPreset];
+  const isLandscape = settings.orientation === "landscape";
+  const width = isLandscape ? paper.height : paper.width;
+  const height = isLandscape ? paper.width : paper.height;
+
+  return {
+    "--page-width": `${width}px`,
+    "--page-height": `${height}px`,
+    "--page-padding-x": `${margin.x}px`,
+    "--page-padding-y": `${margin.y}px`,
+  } as CSSProperties;
 }
 
 function paginateBlocks(blocks: DocumentBlock[]): DocumentBlock[][] {
