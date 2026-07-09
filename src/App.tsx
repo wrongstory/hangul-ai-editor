@@ -36,6 +36,8 @@ import type {
   HangulDocument,
 } from "./types";
 
+type CaretPlacement = "start" | "end" | number;
+
 export function App() {
   const [documentState, setDocumentState] = useState<HangulDocument>(initialDocument);
   const [activeBlockId, setActiveBlockId] = useState<string>(initialDocument.blocks[1].id);
@@ -53,7 +55,7 @@ export function App() {
   const [changeHistory, setChangeHistory] = useState<ChangeHistoryEntry[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const blockElementRefs = useRef(new Map<string, HTMLElement>());
-  const pendingCaretPlacementRef = useRef<"start" | "end" | null>(null);
+  const pendingCaretPlacementRef = useRef<CaretPlacement | null>(null);
 
   const activeBlock = useMemo(
     () => documentState.blocks.find((block) => block.id === activeBlockId),
@@ -80,7 +82,7 @@ export function App() {
       element.focus();
     }
 
-    if (element && pendingCaretPlacementRef.current) {
+    if (element && pendingCaretPlacementRef.current !== null) {
       setCaretPosition(element, pendingCaretPlacementRef.current);
       pendingCaretPlacementRef.current = null;
     }
@@ -134,26 +136,51 @@ export function App() {
     setActiveBlockId(nextBlockId);
   }
 
-  function removeOrMergeEmptyBlock(blockId: string) {
+  function mergeOrRemoveBlockAtStart(blockId: string, currentText: string) {
     let nextActiveBlockId = blockId;
+    let nextCaretPlacement: CaretPlacement | null = null;
 
     setDocumentState((current) => {
       const blockIndex = current.blocks.findIndex((block) => block.id === blockId);
       const block = current.blocks[blockIndex];
 
-      if (!block || block.text.trim().length > 0 || current.blocks.length === 1) {
+      if (!block || current.blocks.length === 1) {
         return current;
       }
 
       const previousBlock = current.blocks[blockIndex - 1];
       const nextBlock = current.blocks[blockIndex + 1];
-      nextActiveBlockId = previousBlock?.id ?? nextBlock?.id ?? blockId;
+
+      if (previousBlock) {
+        const previousText = previousBlock.text;
+        nextActiveBlockId = previousBlock.id;
+        nextCaretPlacement = previousText.length;
+
+        return {
+          ...current,
+          blocks: current.blocks
+            .map((item) =>
+              item.id === previousBlock.id
+                ? { ...item, text: `${previousText}${currentText}` }
+                : item
+            )
+            .filter((item) => item.id !== blockId),
+        };
+      }
+
+      if (currentText.trim().length > 0 || !nextBlock) {
+        return current;
+      }
+
+      nextActiveBlockId = nextBlock.id;
+      nextCaretPlacement = "start";
 
       return {
         ...current,
         blocks: current.blocks.filter((item) => item.id !== blockId),
       };
     });
+    pendingCaretPlacementRef.current = nextCaretPlacement;
     setActiveBlockId(nextActiveBlockId);
   }
 
@@ -413,7 +440,9 @@ export function App() {
                     onInsertAfter={(beforeText, afterText) =>
                       insertParagraphAfter(block.id, beforeText, afterText)
                     }
-                    onRemoveEmpty={() => removeOrMergeEmptyBlock(block.id)}
+                    onBackspaceAtStart={(currentText) =>
+                      mergeOrRemoveBlockAtStart(block.id, currentText)
+                    }
                     registerElement={(element) => {
                       if (element) {
                         blockElementRefs.current.set(block.id, element);
@@ -595,9 +624,31 @@ function getCaretTextOffset(element: HTMLElement): number {
   return preCaretRange.toString().length;
 }
 
-function setCaretPosition(element: HTMLElement, placement: "start" | "end") {
+function setCaretPosition(element: HTMLElement, placement: CaretPlacement) {
   const selection = window.getSelection();
   const range = document.createRange();
+
+  if (typeof placement === "number") {
+    const targetOffset = Math.max(0, placement);
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let remainingOffset = targetOffset;
+    let textNode = walker.nextNode();
+
+    while (textNode) {
+      const textLength = textNode.textContent?.length ?? 0;
+
+      if (remainingOffset <= textLength) {
+        range.setStart(textNode, remainingOffset);
+        range.collapse(true);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        return;
+      }
+
+      remainingOffset -= textLength;
+      textNode = walker.nextNode();
+    }
+  }
 
   range.selectNodeContents(element);
   range.collapse(placement === "start");
@@ -756,7 +807,7 @@ type DocumentBlockEditorProps = {
   onFocus: () => void;
   onChange: (text: string) => void;
   onInsertAfter: (beforeText: string, afterText: string) => void;
-  onRemoveEmpty: () => void;
+  onBackspaceAtStart: (currentText: string) => void;
   registerElement: (element: HTMLElement | null) => void;
 };
 
@@ -766,7 +817,7 @@ function DocumentBlockEditor({
   onFocus,
   onChange,
   onInsertAfter,
-  onRemoveEmpty,
+  onBackspaceAtStart,
   registerElement,
 }: DocumentBlockEditorProps) {
   const elementRef = useRef<HTMLElement | null>(null);
@@ -842,9 +893,12 @@ function DocumentBlockEditor({
         );
       }
 
-      if (event.key === "Backspace" && block.text.trim().length === 0) {
+      if (
+        event.key === "Backspace" &&
+        getCaretTextOffset(event.currentTarget) === 0
+      ) {
         event.preventDefault();
-        onRemoveEmpty();
+        onBackspaceAtStart(event.currentTarget.textContent ?? "");
       }
     },
   };
