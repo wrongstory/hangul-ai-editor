@@ -101,8 +101,8 @@ export function App() {
     getDocumentSignature(proposal.beforeBlocks) !== currentDocumentSignature;
   const latestChange = changeHistory[0];
   const documentPages = useMemo(
-    () => paginateBlocks(documentState.blocks),
-    [documentState.blocks]
+    () => paginateBlocks(documentState.blocks, pageSettings),
+    [documentState.blocks, pageSettings]
   );
   const pageStyle = useMemo(
     () => getPageStyle(pageSettings),
@@ -483,26 +483,49 @@ export function App() {
         </div>
 
         <div className="document-workbench">
-          <div className="page-sheet tiptap-page" style={pageStyle}>
-            <header className="page-title-row">
-              <div>
-                <span className="eyebrow">HWPX Draft</span>
-                <h1>{documentState.title}</h1>
-                <p className="file-status">{fileStatus}</p>
-              </div>
-              <div className="format-badge">
-                <FileText size={15} aria-hidden="true" />
-                {documentState.sourceFormat.toUpperCase()}
-              </div>
-            </header>
+          {documentPages.map((page, pageIndex) => (
+            <div
+              className={[
+                "page-sheet",
+                pageIndex === 0 ? "tiptap-page" : "page-preview",
+              ].join(" ")}
+              key={pageIndex}
+              style={pageStyle}
+            >
+              {pageIndex === 0 ? (
+                <>
+                  <header className="page-title-row">
+                    <div>
+                      <span className="eyebrow">HWPX Draft</span>
+                      <h1>{documentState.title}</h1>
+                      <p className="file-status">{fileStatus}</p>
+                    </div>
+                    <div className="format-badge">
+                      <FileText size={15} aria-hidden="true" />
+                      {documentState.sourceFormat.toUpperCase()}
+                    </div>
+                  </header>
 
-            <div className="editor-surface">
-              <EditorContent editor={editor} />
+                  <div className="editor-surface">
+                    <EditorContent editor={editor} />
+                  </div>
+                </>
+              ) : (
+                <div className="page-preview-content" aria-hidden="true">
+                  {page.map((block) =>
+                    block.type === "heading" ? (
+                      <h2 key={block.id}>{block.text}</h2>
+                    ) : (
+                      <p key={block.id}>{block.text}</p>
+                    )
+                  )}
+                </div>
+              )}
+              <footer className="page-footer" aria-label={`페이지 ${pageIndex + 1}`}>
+                {pageIndex + 1} / {documentPages.length}
+              </footer>
             </div>
-            <footer className="page-footer" aria-label="페이지 1">
-              1 / {documentPages.length}
-            </footer>
-          </div>
+          ))}
         </div>
       </section>
 
@@ -722,30 +745,51 @@ function getEditorSelectionBlockIndex(editor: Editor): number {
   return Math.max(0, editor.state.selection.$from.index(0));
 }
 
-function getPageStyle(settings: PageSettings): CSSProperties {
+function getPageMetrics(settings: PageSettings) {
   const paper = paperSizeOptions[settings.paperSize];
   const margin = pageMarginOptions[settings.marginPreset];
   const isLandscape = settings.orientation === "landscape";
   const width = isLandscape ? paper.height : paper.width;
   const height = isLandscape ? paper.width : paper.height;
+  const contentWidth = width - margin.x * 2;
+  const contentHeight = height - margin.y * 2 - 110;
 
   return {
-    "--page-width": `${width}px`,
-    "--page-height": `${height}px`,
-    "--page-padding-x": `${margin.x}px`,
-    "--page-padding-y": `${margin.y}px`,
+    width,
+    height,
+    contentWidth,
+    contentHeight,
+    marginX: margin.x,
+    marginY: margin.y,
+  };
+}
+
+function getPageStyle(settings: PageSettings): CSSProperties {
+  const metrics = getPageMetrics(settings);
+
+  return {
+    "--page-width": `${metrics.width}px`,
+    "--page-height": `${metrics.height}px`,
+    "--page-padding-x": `${metrics.marginX}px`,
+    "--page-padding-y": `${metrics.marginY}px`,
   } as CSSProperties;
 }
 
-function paginateBlocks(blocks: DocumentBlock[]): DocumentBlock[][] {
+function paginateBlocks(
+  blocks: DocumentBlock[],
+  settings: PageSettings
+): DocumentBlock[][] {
   const pages: DocumentBlock[][] = [];
   let currentPage: DocumentBlock[] = [];
   let currentWeight = 0;
+  const metrics = getPageMetrics(settings);
+  const pageCapacity = getPageCapacity(metrics.contentHeight);
+  const charactersPerLine = getCharactersPerLine(metrics.contentWidth);
 
   for (const block of blocks) {
-    const weight = getBlockPageWeight(block);
+    const weight = getBlockPageWeight(block, charactersPerLine);
 
-    if (currentPage.length > 0 && currentWeight + weight > 34) {
+    if (currentPage.length > 0 && currentWeight + weight > pageCapacity) {
       pages.push(currentPage);
       currentPage = [];
       currentWeight = 0;
@@ -762,8 +806,19 @@ function paginateBlocks(blocks: DocumentBlock[]): DocumentBlock[][] {
   return pages.length > 0 ? pages : [[]];
 }
 
-function getBlockPageWeight(block: DocumentBlock): number {
-  const textLines = Math.max(1, Math.ceil(block.text.length / 38));
+function getPageCapacity(contentHeight: number): number {
+  return Math.max(10, Math.floor(contentHeight / 31));
+}
+
+function getCharactersPerLine(contentWidth: number): number {
+  return Math.max(18, Math.floor(contentWidth / 16));
+}
+
+function getBlockPageWeight(
+  block: DocumentBlock,
+  charactersPerLine: number
+): number {
+  const textLines = Math.max(1, Math.ceil(block.text.length / charactersPerLine));
 
   if (block.type === "heading") {
     return block.level === 1 ? textLines + 4 : textLines + 3;

@@ -430,6 +430,42 @@ textarea {
   font-size: 12px;
 }
 
+.page-preview {
+  color: #26313a;
+}
+
+.page-preview-content {
+  flex: 1;
+  overflow: hidden;
+  opacity: 0.72;
+  white-space: pre-wrap;
+  word-break: keep-all;
+}
+
+.page-preview-content p,
+.page-preview-content h2 {
+  margin: 0;
+  padding: 2px 4px;
+}
+
+.page-preview-content p {
+  min-height: 30px;
+  margin: 2px 0;
+  font-size: 16px;
+  line-height: 2;
+}
+
+.page-preview-content h2 {
+  margin: 18px 0 10px;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.55;
+}
+
+.page-preview-content h2:first-child {
+  margin-top: 0;
+}
+
 .document-block {
   position: relative;
   margin: 0;
