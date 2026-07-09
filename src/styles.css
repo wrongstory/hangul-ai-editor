@@ -333,56 +333,45 @@ textarea {
 }
 
 .document-block {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
-  padding: 6px 8px;
+  position: relative;
+  margin: 0;
+  padding: 2px 4px;
   border: 1px solid transparent;
   border-radius: 2px;
-}
-
-.document-block + .document-block {
-  margin-top: 8px;
-}
-
-.document-block.selected {
-  border-color: #9bb9e7;
-  background: #f5f9ff;
-}
-
-.document-block span {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 24px;
-  border-radius: 2px;
-  color: #5f5f5f;
-  background: #f1f1f1;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.document-block textarea {
-  width: 100%;
-  resize: vertical;
-  border: 0;
   outline: 0;
   color: #1d2430;
   background: transparent;
-  line-height: 1.85;
+  white-space: pre-wrap;
+  word-break: keep-all;
 }
 
-.document-block.heading textarea {
-  min-height: 44px;
+.document-block.active {
+  background: #f7fbff;
+  box-shadow: inset 3px 0 0 #8ab6e8;
+}
+
+.document-block.heading {
+  margin: 18px 0 10px;
   font-size: 22px;
   font-weight: 800;
-  line-height: 1.4;
+  line-height: 1.55;
 }
 
-.document-block.paragraph textarea {
-  min-height: 126px;
+.document-block.heading:first-child {
+  margin-top: 0;
+}
+
+.document-block.paragraph {
+  min-height: 30px;
+  margin: 2px 0;
   font-size: 16px;
+  line-height: 2;
+  text-align: left;
+}
+
+.document-block:empty::before {
+  color: #a4aaa7;
+  content: " ";
 }
 
 .ai-sidebar {

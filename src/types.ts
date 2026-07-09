@@ -25,9 +25,11 @@ export type ChatMessage = {
 
 export type AiProposal = {
   id: string;
-  targetBlockId: string;
-  targetBlockLabel: string;
+  scope: "document";
+  targetLabel: string;
   prompt: string;
+  beforeBlocks: DocumentBlock[];
+  afterBlocks: DocumentBlock[];
   before: string;
   after: string;
   summary: string;
@@ -36,9 +38,11 @@ export type AiProposal = {
 export type ChangeHistoryEntry = {
   id: string;
   proposalId: string;
-  targetBlockId: string;
-  targetBlockLabel: string;
+  scope: "document";
+  targetLabel: string;
   prompt: string;
+  beforeBlocks: DocumentBlock[];
+  afterBlocks: DocumentBlock[];
   before: string;
   after: string;
   summary: string;

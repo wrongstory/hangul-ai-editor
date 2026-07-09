@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
+import type { FormEvent } from "react";
 import { createMockProposal } from "./ai/mockAi";
 import { parseHwpxFile } from "./hwpx/parseHwpx";
 import { initialDocument } from "./mockDocument";
@@ -36,14 +37,14 @@ import type {
 
 export function App() {
   const [documentState, setDocumentState] = useState<HangulDocument>(initialDocument);
-  const [selectedBlockId, setSelectedBlockId] = useState<string>(initialDocument.blocks[1].id);
+  const [activeBlockId, setActiveBlockId] = useState<string>(initialDocument.blocks[1].id);
   const [fileStatus, setFileStatus] = useState("샘플 문서로 시작됨");
   const [isOpeningFile, setIsOpeningFile] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "welcome",
       role: "assistant",
-      content: "문단을 선택하고 원하는 편집을 요청하면 수정안을 만들어둘게요.",
+      content: "문서를 열고 원하는 편집을 요청하면 전체 문서를 기준으로 수정안을 만들어둘게요.",
     },
   ]);
   const [prompt, setPrompt] = useState("");
@@ -51,19 +52,17 @@ export function App() {
   const [changeHistory, setChangeHistory] = useState<ChangeHistoryEntry[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const selectedBlock = useMemo(
-    () => documentState.blocks.find((block) => block.id === selectedBlockId),
-    [documentState.blocks, selectedBlockId]
+  const activeBlock = useMemo(
+    () => documentState.blocks.find((block) => block.id === activeBlockId),
+    [documentState.blocks, activeBlockId]
   );
-  const proposalTargetBlock = useMemo(
-    () =>
-      proposal
-        ? documentState.blocks.find((block) => block.id === proposal.targetBlockId)
-        : undefined,
-    [documentState.blocks, proposal]
+  const currentDocumentSignature = useMemo(
+    () => getDocumentSignature(documentState.blocks),
+    [documentState.blocks]
   );
   const proposalIsStale =
-    proposal !== undefined && proposalTargetBlock?.text !== proposal.before;
+    proposal !== undefined &&
+    getDocumentSignature(proposal.beforeBlocks) !== currentDocumentSignature;
   const latestChange = changeHistory[0];
 
   function updateBlockText(blockId: string, text: string) {
@@ -91,7 +90,7 @@ export function App() {
     try {
       const nextDocument = await parseHwpxFile(file);
       setDocumentState(nextDocument);
-      setSelectedBlockId(nextDocument.blocks[0].id);
+      setActiveBlockId(nextDocument.blocks[0].id);
       setProposal(undefined);
       setChangeHistory([]);
       setFileStatus(`${file.name}에서 ${nextDocument.blocks.length}개 문단을 불러왔습니다.`);
@@ -100,7 +99,7 @@ export function App() {
         {
           id: crypto.randomUUID(),
           role: "system",
-          content: `${file.name} 파일을 열었습니다. 문단을 선택해 AI 편집을 요청할 수 있습니다.`,
+          content: `${file.name} 파일을 열었습니다. 전체 문서를 기준으로 AI 편집을 요청할 수 있습니다.`,
         },
       ]);
     } catch (error) {
@@ -134,7 +133,7 @@ export function App() {
       return;
     }
 
-    const nextProposal = createMockProposal(trimmedPrompt, selectedBlock);
+    const nextProposal = createMockProposal(trimmedPrompt, documentState);
 
     setMessages((current) => [
       ...current,
@@ -142,9 +141,7 @@ export function App() {
       {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: nextProposal
-          ? "선택 문단에 대한 수정안을 만들었습니다. 적용 전에 내용을 확인해 주세요."
-          : "먼저 왼쪽에서 수정할 문단을 선택해 주세요.",
+        content: "전체 문서에 대한 수정안을 만들었습니다. 적용 전에 내용을 확인해 주세요.",
       },
     ]);
     setProposal(nextProposal);
@@ -159,7 +156,7 @@ export function App() {
           {
             id: crypto.randomUUID(),
             role: "system",
-            content: "제안 생성 후 대상 문단이 변경되어 적용하지 않았습니다. 다시 요청해 주세요.",
+            content: "제안 생성 후 문서가 변경되어 적용하지 않았습니다. 다시 요청해 주세요.",
           },
         ]);
       }
@@ -167,15 +164,20 @@ export function App() {
       return;
     }
 
-    updateBlockText(proposal.targetBlockId, proposal.after);
-    setSelectedBlockId(proposal.targetBlockId);
+    setDocumentState((current) => ({
+      ...current,
+      blocks: proposal.afterBlocks.map((block) => ({ ...block })),
+    }));
+    setActiveBlockId(proposal.afterBlocks[0]?.id ?? activeBlockId);
     setChangeHistory((current) => [
       {
         id: crypto.randomUUID(),
         proposalId: proposal.id,
-        targetBlockId: proposal.targetBlockId,
-        targetBlockLabel: proposal.targetBlockLabel,
+        scope: proposal.scope,
+        targetLabel: proposal.targetLabel,
         prompt: proposal.prompt,
+        beforeBlocks: proposal.beforeBlocks.map((block) => ({ ...block })),
+        afterBlocks: proposal.afterBlocks.map((block) => ({ ...block })),
         before: proposal.before,
         after: proposal.after,
         summary: proposal.summary,
@@ -201,8 +203,11 @@ export function App() {
       return;
     }
 
-    updateBlockText(latest.targetBlockId, latest.before);
-    setSelectedBlockId(latest.targetBlockId);
+    setDocumentState((current) => ({
+      ...current,
+      blocks: latest.beforeBlocks.map((block) => ({ ...block })),
+    }));
+    setActiveBlockId(latest.beforeBlocks[0]?.id ?? activeBlockId);
     setChangeHistory(remaining);
     setMessages((current) => [
       ...current,
@@ -311,8 +316,8 @@ export function App() {
                 <DocumentBlockEditor
                   key={block.id}
                   block={block}
-                  selected={block.id === selectedBlockId}
-                  onSelect={() => setSelectedBlockId(block.id)}
+                  active={block.id === activeBlockId}
+                  onFocus={() => setActiveBlockId(block.id)}
                   onChange={(text) => updateBlockText(block.id, text)}
                 />
               ))}
@@ -326,15 +331,15 @@ export function App() {
           <MessageSquareText size={20} aria-hidden="true" />
           <div>
             <h2>AI Sidebar</h2>
-            <p>{selectedBlock ? "선택 문단 준비됨" : "문단 선택 필요"}</p>
+            <p>전체 문서 기준 작업</p>
           </div>
         </header>
 
         <section className="workflow-status" aria-label="AI 편집 상태">
           <div>
-            <span className="eyebrow">Target</span>
-            <strong>{selectedBlock ? getBlockLabel(selectedBlock) : "선택 없음"}</strong>
-            <p>{selectedBlock ? selectedBlock.text : "왼쪽 문서에서 문단을 선택해 주세요."}</p>
+            <span className="eyebrow">Document</span>
+            <strong>{documentState.blocks.length}개 블록 · {documentState.sourceFormat.toUpperCase()}</strong>
+            <p>{activeBlock ? `현재 커서 위치: ${getBlockLabel(activeBlock)}` : "문서 전체를 기준으로 작업합니다."}</p>
           </div>
           <div className="history-summary">
             <div>
@@ -342,7 +347,7 @@ export function App() {
               <strong>{changeHistory.length}개 적용됨</strong>
               <p>
                 {latestChange
-                  ? `${latestChange.targetBlockLabel} · ${formatAppliedTime(latestChange.appliedAt)}`
+                  ? `${latestChange.targetLabel} · ${formatAppliedTime(latestChange.appliedAt)}`
                   : "아직 적용된 AI 변경이 없습니다."}
               </p>
             </div>
@@ -369,7 +374,7 @@ export function App() {
         {proposal ? (
           <section className="proposal" aria-label="수정안 미리보기">
             <div className="proposal-meta">
-              <span>{proposal.targetBlockLabel}</span>
+              <span>{proposal.targetLabel}</span>
               <strong>{proposal.summary}</strong>
               <p>{proposal.prompt}</p>
             </div>
@@ -383,7 +388,7 @@ export function App() {
             </div>
             {proposalIsStale ? (
               <p className="proposal-warning">
-                대상 문단이 제안 생성 후 변경되었습니다. 현재 제안은 다시 생성해야 적용할 수 있습니다.
+                문서가 제안 생성 후 변경되었습니다. 현재 제안은 다시 생성해야 적용할 수 있습니다.
               </p>
             ) : null}
             <div className="proposal-actions">
@@ -433,6 +438,12 @@ function getBlockLabel(block: DocumentBlock): string {
   }
 
   return "본문 문단";
+}
+
+function getDocumentSignature(blocks: DocumentBlock[]): string {
+  return blocks
+    .map((block) => `${block.id}:${block.type}:${block.text}`)
+    .join("\n");
 }
 
 function formatAppliedTime(value: string): string {
@@ -541,31 +552,47 @@ function HangulShellHeader({ documentTitle }: { documentTitle: string }) {
 
 type DocumentBlockEditorProps = {
   block: DocumentBlock;
-  selected: boolean;
-  onSelect: () => void;
+  active: boolean;
+  onFocus: () => void;
   onChange: (text: string) => void;
 };
 
 function DocumentBlockEditor({
   block,
-  selected,
-  onSelect,
+  active,
+  onFocus,
   onChange,
 }: DocumentBlockEditorProps) {
   const className = [
     "document-block",
     block.type,
-    selected ? "selected" : "",
+    active ? "active" : "",
   ].join(" ");
+  const editableProps = {
+    className,
+    contentEditable: true,
+    suppressContentEditableWarning: true,
+    spellCheck: false,
+    onFocus,
+    onClick: onFocus,
+    onInput: (event: FormEvent<HTMLElement>) => {
+      onChange(event.currentTarget.textContent ?? "");
+    },
+  };
+
+  if (block.type === "heading" && block.level === 1) {
+    return <h1 {...editableProps}>{block.text}</h1>;
+  }
+
+  if (block.type === "heading" && block.level === 2) {
+    return <h2 {...editableProps}>{block.text}</h2>;
+  }
+
+  if (block.type === "heading" && block.level === 3) {
+    return <h3 {...editableProps}>{block.text}</h3>;
+  }
 
   return (
-    <label className={className} onFocus={onSelect} onClick={onSelect}>
-      {block.type === "heading" ? <span>H{block.level}</span> : <span>P</span>}
-      <textarea
-        value={block.text}
-        onChange={(event) => onChange(event.target.value)}
-        rows={block.type === "heading" ? 1 : 4}
-      />
-    </label>
+    <p {...editableProps}>{block.text}</p>
   );
 }
