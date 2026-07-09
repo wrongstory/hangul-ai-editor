@@ -1,4 +1,26 @@
-import { Check, FileText, MessageSquareText, RotateCcw, X } from "lucide-react";
+import {
+  AlignJustify,
+  AlignLeft,
+  BarChart3,
+  Check,
+  Clipboard,
+  Columns3,
+  FileText,
+  FolderOpen,
+  Image,
+  Layout,
+  Lock,
+  MessageSquareText,
+  Printer,
+  RotateCcw,
+  Save,
+  Scissors,
+  Search,
+  Table,
+  Type,
+  X,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { createMockProposal } from "./ai/mockAi";
 import { initialDocument } from "./mockDocument";
@@ -87,27 +109,79 @@ export function App() {
   return (
     <main className="app-shell">
       <section className="document-pane" aria-label="문서 편집 영역">
-        <header className="topbar">
-          <div>
-            <span className="eyebrow">Draft workspace</span>
-            <h1>{documentState.title}</h1>
-          </div>
-          <div className="format-badge">
-            <FileText size={16} aria-hidden="true" />
-            {documentState.sourceFormat.toUpperCase()}
-          </div>
-        </header>
+        <HangulShellHeader documentTitle={documentState.title} />
 
-        <div className="editor-surface">
-          {documentState.blocks.map((block) => (
-            <DocumentBlockEditor
-              key={block.id}
-              block={block}
-              selected={block.id === selectedBlockId}
-              onSelect={() => setSelectedBlockId(block.id)}
-              onChange={(text) => updateBlockText(block.id, text)}
-            />
+        <div className="quick-toolbar" aria-label="빠른 실행 도구">
+          <button type="button" title="새 문서">
+            <FileText size={15} aria-hidden="true" />
+          </button>
+          <button type="button" title="불러오기">
+            <FolderOpen size={15} aria-hidden="true" />
+          </button>
+          <button type="button" title="저장">
+            <Save size={15} aria-hidden="true" />
+          </button>
+          <span className="toolbar-separator" />
+          <button type="button" title="인쇄">
+            <Printer size={15} aria-hidden="true" />
+          </button>
+          <select aria-label="문단 스타일" defaultValue="바탕글">
+            <option>바탕글</option>
+            <option>제목 1</option>
+            <option>본문</option>
+          </select>
+          <select aria-label="글꼴" defaultValue="함초롬바탕">
+            <option>함초롬바탕</option>
+            <option>맑은 고딕</option>
+            <option>굴림</option>
+          </select>
+          <input aria-label="글자 크기" defaultValue="14.0" />
+          <span className="unit-label">pt</span>
+          <button type="button" title="왼쪽 정렬">
+            <AlignLeft size={15} aria-hidden="true" />
+          </button>
+          <button type="button" title="양쪽 정렬">
+            <AlignJustify size={15} aria-hidden="true" />
+          </button>
+          <select aria-label="확대 비율" defaultValue="160%">
+            <option>100%</option>
+            <option>125%</option>
+            <option>160%</option>
+            <option>200%</option>
+          </select>
+        </div>
+
+        <div className="ruler" aria-hidden="true">
+          {Array.from({ length: 19 }, (_, index) => (
+            <span key={index}>{index + 1}</span>
           ))}
+        </div>
+
+        <div className="document-workbench">
+          <div className="page-sheet">
+            <header className="page-title-row">
+              <div>
+                <span className="eyebrow">HWPX Draft</span>
+                <h1>{documentState.title}</h1>
+              </div>
+              <div className="format-badge">
+                <FileText size={15} aria-hidden="true" />
+                {documentState.sourceFormat.toUpperCase()}
+              </div>
+            </header>
+
+            <div className="editor-surface">
+              {documentState.blocks.map((block) => (
+                <DocumentBlockEditor
+                  key={block.id}
+                  block={block}
+                  selected={block.id === selectedBlockId}
+                  onSelect={() => setSelectedBlockId(block.id)}
+                  onChange={(text) => updateBlockText(block.id, text)}
+                />
+              ))}
+            </div>
+          </div>
         </div>
       </section>
 
@@ -173,6 +247,103 @@ export function App() {
   );
 }
 
+function HangulShellHeader({ documentTitle }: { documentTitle: string }) {
+  const menuItems = ["파일", "편집", "보기", "입력", "서식", "쪽", "보안", "검토", "도구"];
+  const ribbonGroups: Array<{
+    label: string;
+    items: Array<{
+      icon: LucideIcon;
+      label: string;
+      active?: boolean;
+      muted?: boolean;
+    }>;
+  }> = [
+    {
+      label: "클립보드",
+      items: [
+        { icon: Scissors, label: "오려두기", muted: true },
+        { icon: Clipboard, label: "붙이기" },
+      ],
+    },
+    {
+      label: "글자",
+      items: [
+        { icon: Type, label: "글자 모양" },
+        { icon: AlignJustify, label: "문단 모양" },
+      ],
+    },
+    {
+      label: "쪽",
+      items: [
+        { icon: Layout, label: "세로", active: true },
+        { icon: Columns3, label: "단" },
+      ],
+    },
+    {
+      label: "입력",
+      items: [
+        { icon: Image, label: "그림" },
+        { icon: Table, label: "표" },
+        { icon: BarChart3, label: "차트" },
+      ],
+    },
+    {
+      label: "도구",
+      items: [
+        { icon: Lock, label: "개체 보호" },
+        { icon: Search, label: "찾기" },
+      ],
+    },
+  ];
+
+  return (
+    <header className="hangul-shell-header">
+      <div className="window-title">
+        <span>{documentTitle}.hwpx</span>
+        <strong>한글 AI 편집기</strong>
+      </div>
+      <nav className="menu-strip" aria-label="상단 메뉴">
+        {menuItems.map((item) => (
+          <button
+            className={item === "편집" ? "active" : ""}
+            key={item}
+            type="button"
+          >
+            {item}
+          </button>
+        ))}
+      </nav>
+      <div className="ribbon" aria-label="편집 리본">
+        {ribbonGroups.map((group) => (
+          <div className="ribbon-group" key={group.label}>
+            <div className="ribbon-actions">
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    className={[
+                      "ribbon-button",
+                      item.active ? "active" : "",
+                      item.muted ? "muted" : "",
+                    ].join(" ")}
+                    key={item.label}
+                    type="button"
+                    title={item.label}
+                  >
+                    <Icon size={24} aria-hidden="true" />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <span className="ribbon-label">{group.label}</span>
+          </div>
+        ))}
+      </div>
+    </header>
+  );
+}
+
 type DocumentBlockEditorProps = {
   block: DocumentBlock;
   selected: boolean;
@@ -203,4 +374,3 @@ function DocumentBlockEditor({
     </label>
   );
 }
-
