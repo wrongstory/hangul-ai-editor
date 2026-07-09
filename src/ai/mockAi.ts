@@ -14,10 +14,20 @@ export function createMockProposal(
   return {
     id: crypto.randomUUID(),
     targetBlockId: selectedBlock.id,
+    targetBlockLabel: formatBlockLabel(selectedBlock),
+    prompt,
     before: selectedBlock.text,
     after,
     summary: "Mock AI가 선택한 문단의 문체를 더 정돈된 보고서 문장으로 제안했습니다.",
   };
+}
+
+function formatBlockLabel(block: DocumentBlock): string {
+  if (block.type === "heading") {
+    return `H${block.level} 제목`;
+  }
+
+  return "본문 문단";
 }
 
 function buildMockRewrite(prompt: string, text: string): string {
@@ -33,4 +43,3 @@ function buildMockRewrite(prompt: string, text: string): string {
 
   return `${normalized} 문장을 더 자연스럽고 명확하게 다듬은 수정안입니다.`;
 }
-

@@ -5,6 +5,7 @@ import {
   Check,
   Clipboard,
   Columns3,
+  History,
   FileText,
   FolderOpen,
   Image,
@@ -21,14 +22,23 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { createMockProposal } from "./ai/mockAi";
+import { parseHwpxFile } from "./hwpx/parseHwpx";
 import { initialDocument } from "./mockDocument";
-import type { AiProposal, ChatMessage, DocumentBlock, HangulDocument } from "./types";
+import type {
+  AiProposal,
+  ChangeHistoryEntry,
+  ChatMessage,
+  DocumentBlock,
+  HangulDocument,
+} from "./types";
 
 export function App() {
   const [documentState, setDocumentState] = useState<HangulDocument>(initialDocument);
   const [selectedBlockId, setSelectedBlockId] = useState<string>(initialDocument.blocks[1].id);
+  const [fileStatus, setFileStatus] = useState("샘플 문서로 시작됨");
+  const [isOpeningFile, setIsOpeningFile] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "welcome",
@@ -38,11 +48,23 @@ export function App() {
   ]);
   const [prompt, setPrompt] = useState("");
   const [proposal, setProposal] = useState<AiProposal | undefined>();
+  const [changeHistory, setChangeHistory] = useState<ChangeHistoryEntry[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedBlock = useMemo(
     () => documentState.blocks.find((block) => block.id === selectedBlockId),
     [documentState.blocks, selectedBlockId]
   );
+  const proposalTargetBlock = useMemo(
+    () =>
+      proposal
+        ? documentState.blocks.find((block) => block.id === proposal.targetBlockId)
+        : undefined,
+    [documentState.blocks, proposal]
+  );
+  const proposalIsStale =
+    proposal !== undefined && proposalTargetBlock?.text !== proposal.before;
+  const latestChange = changeHistory[0];
 
   function updateBlockText(blockId: string, text: string) {
     setDocumentState((current) => ({
@@ -51,6 +73,58 @@ export function App() {
         block.id === blockId ? { ...block, text } : block
       ),
     }));
+  }
+
+  async function openHwpxFile(file: File | undefined) {
+    if (!file) {
+      return;
+    }
+
+    if (!file.name.toLowerCase().endsWith(".hwpx")) {
+      setFileStatus("지원하지 않는 파일입니다. .hwpx 파일을 선택해 주세요.");
+      return;
+    }
+
+    setIsOpeningFile(true);
+    setFileStatus(`${file.name} 여는 중...`);
+
+    try {
+      const nextDocument = await parseHwpxFile(file);
+      setDocumentState(nextDocument);
+      setSelectedBlockId(nextDocument.blocks[0].id);
+      setProposal(undefined);
+      setChangeHistory([]);
+      setFileStatus(`${file.name}에서 ${nextDocument.blocks.length}개 문단을 불러왔습니다.`);
+      setMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: "system",
+          content: `${file.name} 파일을 열었습니다. 문단을 선택해 AI 편집을 요청할 수 있습니다.`,
+        },
+      ]);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "HWPX 파일을 여는 중 오류가 발생했습니다.";
+
+      setFileStatus(message);
+      setMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: "system",
+          content: message,
+        },
+      ]);
+    } finally {
+      setIsOpeningFile(false);
+
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
   }
 
   function submitPrompt() {
@@ -78,11 +152,37 @@ export function App() {
   }
 
   function applyProposal() {
-    if (!proposal) {
+    if (!proposal || proposalIsStale) {
+      if (proposalIsStale) {
+        setMessages((current) => [
+          ...current,
+          {
+            id: crypto.randomUUID(),
+            role: "system",
+            content: "제안 생성 후 대상 문단이 변경되어 적용하지 않았습니다. 다시 요청해 주세요.",
+          },
+        ]);
+      }
+
       return;
     }
 
     updateBlockText(proposal.targetBlockId, proposal.after);
+    setSelectedBlockId(proposal.targetBlockId);
+    setChangeHistory((current) => [
+      {
+        id: crypto.randomUUID(),
+        proposalId: proposal.id,
+        targetBlockId: proposal.targetBlockId,
+        targetBlockLabel: proposal.targetBlockLabel,
+        prompt: proposal.prompt,
+        before: proposal.before,
+        after: proposal.after,
+        summary: proposal.summary,
+        appliedAt: new Date().toISOString(),
+      },
+      ...current,
+    ]);
     setMessages((current) => [
       ...current,
       {
@@ -92,6 +192,26 @@ export function App() {
       },
     ]);
     setProposal(undefined);
+  }
+
+  function undoLatestChange() {
+    const [latest, ...remaining] = changeHistory;
+
+    if (!latest) {
+      return;
+    }
+
+    updateBlockText(latest.targetBlockId, latest.before);
+    setSelectedBlockId(latest.targetBlockId);
+    setChangeHistory(remaining);
+    setMessages((current) => [
+      ...current,
+      {
+        id: crypto.randomUUID(),
+        role: "system",
+        content: "최근 AI 적용 변경을 되돌렸습니다.",
+      },
+    ]);
   }
 
   function cancelProposal() {
@@ -115,9 +235,24 @@ export function App() {
           <button type="button" title="새 문서">
             <FileText size={15} aria-hidden="true" />
           </button>
-          <button type="button" title="불러오기">
+          <button
+            type="button"
+            title="HWPX 불러오기"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isOpeningFile}
+          >
             <FolderOpen size={15} aria-hidden="true" />
           </button>
+          <input
+            ref={fileInputRef}
+            className="file-input"
+            type="file"
+            accept=".hwpx,application/zip"
+            aria-label="HWPX 파일 선택"
+            onChange={(event) => {
+              void openHwpxFile(event.target.files?.[0]);
+            }}
+          />
           <button type="button" title="저장">
             <Save size={15} aria-hidden="true" />
           </button>
@@ -163,6 +298,7 @@ export function App() {
               <div>
                 <span className="eyebrow">HWPX Draft</span>
                 <h1>{documentState.title}</h1>
+                <p className="file-status">{fileStatus}</p>
               </div>
               <div className="format-badge">
                 <FileText size={15} aria-hidden="true" />
@@ -194,6 +330,34 @@ export function App() {
           </div>
         </header>
 
+        <section className="workflow-status" aria-label="AI 편집 상태">
+          <div>
+            <span className="eyebrow">Target</span>
+            <strong>{selectedBlock ? getBlockLabel(selectedBlock) : "선택 없음"}</strong>
+            <p>{selectedBlock ? selectedBlock.text : "왼쪽 문서에서 문단을 선택해 주세요."}</p>
+          </div>
+          <div className="history-summary">
+            <div>
+              <span className="eyebrow">History</span>
+              <strong>{changeHistory.length}개 적용됨</strong>
+              <p>
+                {latestChange
+                  ? `${latestChange.targetBlockLabel} · ${formatAppliedTime(latestChange.appliedAt)}`
+                  : "아직 적용된 AI 변경이 없습니다."}
+              </p>
+            </div>
+            <button
+              className="icon-button"
+              type="button"
+              onClick={undoLatestChange}
+              disabled={!latestChange}
+              title="최근 AI 변경 되돌리기"
+            >
+              <History size={18} aria-hidden="true" />
+            </button>
+          </div>
+        </section>
+
         <div className="chat-log">
           {messages.map((message) => (
             <article className={`message ${message.role}`} key={message.id}>
@@ -204,6 +368,11 @@ export function App() {
 
         {proposal ? (
           <section className="proposal" aria-label="수정안 미리보기">
+            <div className="proposal-meta">
+              <span>{proposal.targetBlockLabel}</span>
+              <strong>{proposal.summary}</strong>
+              <p>{proposal.prompt}</p>
+            </div>
             <div>
               <span className="eyebrow">Before</span>
               <p>{proposal.before}</p>
@@ -212,8 +381,19 @@ export function App() {
               <span className="eyebrow">After</span>
               <p>{proposal.after}</p>
             </div>
+            {proposalIsStale ? (
+              <p className="proposal-warning">
+                대상 문단이 제안 생성 후 변경되었습니다. 현재 제안은 다시 생성해야 적용할 수 있습니다.
+              </p>
+            ) : null}
             <div className="proposal-actions">
-              <button className="icon-button apply" type="button" onClick={applyProposal} title="적용">
+              <button
+                className="icon-button apply"
+                type="button"
+                onClick={applyProposal}
+                disabled={proposalIsStale}
+                title="적용"
+              >
                 <Check size={18} aria-hidden="true" />
               </button>
               <button className="icon-button" type="button" onClick={cancelProposal} title="취소">
@@ -245,6 +425,21 @@ export function App() {
       </aside>
     </main>
   );
+}
+
+function getBlockLabel(block: DocumentBlock): string {
+  if (block.type === "heading") {
+    return `H${block.level} 제목`;
+  }
+
+  return "본문 문단";
+}
+
+function formatAppliedTime(value: string): string {
+  return new Intl.DateTimeFormat("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
 function HangulShellHeader({ documentTitle }: { documentTitle: string }) {
