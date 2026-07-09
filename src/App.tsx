@@ -22,8 +22,8 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent, KeyboardEvent } from "react";
 import { createMockProposal } from "./ai/mockAi";
 import { parseHwpxFile } from "./hwpx/parseHwpx";
 import { initialDocument } from "./mockDocument";
@@ -51,6 +51,7 @@ export function App() {
   const [proposal, setProposal] = useState<AiProposal | undefined>();
   const [changeHistory, setChangeHistory] = useState<ChangeHistoryEntry[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const blockElementRefs = useRef(new Map<string, HTMLElement>());
 
   const activeBlock = useMemo(
     () => documentState.blocks.find((block) => block.id === activeBlockId),
@@ -69,6 +70,14 @@ export function App() {
     [documentState.blocks]
   );
 
+  useEffect(() => {
+    const element = blockElementRefs.current.get(activeBlockId);
+
+    if (element && document.activeElement !== element) {
+      element.focus();
+    }
+  }, [activeBlockId]);
+
   function updateBlockText(blockId: string, text: string) {
     setDocumentState((current) => ({
       ...current,
@@ -76,6 +85,54 @@ export function App() {
         block.id === blockId ? { ...block, text } : block
       ),
     }));
+  }
+
+  function insertParagraphAfter(blockId: string) {
+    const nextBlockId = crypto.randomUUID();
+
+    setDocumentState((current) => {
+      const blockIndex = current.blocks.findIndex((block) => block.id === blockId);
+
+      if (blockIndex < 0) {
+        return current;
+      }
+
+      const nextBlocks = [...current.blocks];
+      nextBlocks.splice(blockIndex + 1, 0, {
+        id: nextBlockId,
+        type: "paragraph",
+        text: "",
+      });
+
+      return {
+        ...current,
+        blocks: nextBlocks,
+      };
+    });
+    setActiveBlockId(nextBlockId);
+  }
+
+  function removeOrMergeEmptyBlock(blockId: string) {
+    let nextActiveBlockId = blockId;
+
+    setDocumentState((current) => {
+      const blockIndex = current.blocks.findIndex((block) => block.id === blockId);
+      const block = current.blocks[blockIndex];
+
+      if (!block || block.text.trim().length > 0 || current.blocks.length === 1) {
+        return current;
+      }
+
+      const previousBlock = current.blocks[blockIndex - 1];
+      const nextBlock = current.blocks[blockIndex + 1];
+      nextActiveBlockId = previousBlock?.id ?? nextBlock?.id ?? blockId;
+
+      return {
+        ...current,
+        blocks: current.blocks.filter((item) => item.id !== blockId),
+      };
+    });
+    setActiveBlockId(nextActiveBlockId);
   }
 
   async function openHwpxFile(file: File | undefined) {
@@ -324,6 +381,15 @@ export function App() {
                     active={block.id === activeBlockId}
                     onFocus={() => setActiveBlockId(block.id)}
                     onChange={(text) => updateBlockText(block.id, text)}
+                    onInsertAfter={() => insertParagraphAfter(block.id)}
+                    onRemoveEmpty={() => removeOrMergeEmptyBlock(block.id)}
+                    registerElement={(element) => {
+                      if (element) {
+                        blockElementRefs.current.set(block.id, element);
+                      } else {
+                        blockElementRefs.current.delete(block.id);
+                      }
+                    }}
                   />
                 ))}
               </div>
@@ -599,6 +665,9 @@ type DocumentBlockEditorProps = {
   active: boolean;
   onFocus: () => void;
   onChange: (text: string) => void;
+  onInsertAfter: () => void;
+  onRemoveEmpty: () => void;
+  registerElement: (element: HTMLElement | null) => void;
 };
 
 function DocumentBlockEditor({
@@ -606,6 +675,9 @@ function DocumentBlockEditor({
   active,
   onFocus,
   onChange,
+  onInsertAfter,
+  onRemoveEmpty,
+  registerElement,
 }: DocumentBlockEditorProps) {
   const className = [
     "document-block",
@@ -615,12 +687,24 @@ function DocumentBlockEditor({
   const editableProps = {
     className,
     contentEditable: true,
+    ref: registerElement,
     suppressContentEditableWarning: true,
     spellCheck: false,
     onFocus,
     onClick: onFocus,
     onInput: (event: FormEvent<HTMLElement>) => {
       onChange(event.currentTarget.textContent ?? "");
+    },
+    onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        onInsertAfter();
+      }
+
+      if (event.key === "Backspace" && block.text.trim().length === 0) {
+        event.preventDefault();
+        onRemoveEmpty();
+      }
     },
   };
 
