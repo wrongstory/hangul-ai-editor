@@ -29,6 +29,7 @@ import { parseHwpxFile } from "./hwpx/parseHwpx";
 import { initialDocument } from "./mockDocument";
 import type {
   AiProposal,
+  BlockStyle,
   ChangeHistoryEntry,
   ChatMessage,
   DocumentBlock,
@@ -69,6 +70,7 @@ export function App() {
     () => paginateBlocks(documentState.blocks),
     [documentState.blocks]
   );
+  const activeBlockStyle = activeBlock ? getBlockStyle(activeBlock) : "paragraph";
 
   useEffect(() => {
     const element = blockElementRefs.current.get(activeBlockId);
@@ -83,6 +85,15 @@ export function App() {
       ...current,
       blocks: current.blocks.map((block) =>
         block.id === blockId ? { ...block, text } : block
+      ),
+    }));
+  }
+
+  function updateActiveBlockStyle(style: BlockStyle) {
+    setDocumentState((current) => ({
+      ...current,
+      blocks: current.blocks.map((block) =>
+        block.id === activeBlockId ? convertBlockStyle(block, style) : block
       ),
     }));
   }
@@ -326,10 +337,17 @@ export function App() {
           <button type="button" title="인쇄">
             <Printer size={15} aria-hidden="true" />
           </button>
-          <select aria-label="문단 스타일" defaultValue="바탕글">
-            <option>바탕글</option>
-            <option>제목 1</option>
-            <option>본문</option>
+          <select
+            aria-label="문단 스타일"
+            value={activeBlockStyle}
+            onChange={(event) => {
+              updateActiveBlockStyle(event.target.value as BlockStyle);
+            }}
+          >
+            <option value="paragraph">본문</option>
+            <option value="heading-1">제목 1</option>
+            <option value="heading-2">제목 2</option>
+            <option value="heading-3">제목 3</option>
           </select>
           <select aria-label="글꼴" defaultValue="함초롬바탕">
             <option>함초롬바탕</option>
@@ -513,6 +531,31 @@ function getBlockLabel(block: DocumentBlock): string {
   }
 
   return "본문 문단";
+}
+
+function getBlockStyle(block: DocumentBlock): BlockStyle {
+  if (block.type === "heading") {
+    return `heading-${block.level}`;
+  }
+
+  return "paragraph";
+}
+
+function convertBlockStyle(block: DocumentBlock, style: BlockStyle): DocumentBlock {
+  if (style === "paragraph") {
+    return {
+      id: block.id,
+      type: "paragraph",
+      text: block.text,
+    };
+  }
+
+  return {
+    id: block.id,
+    type: "heading",
+    level: Number(style.replace("heading-", "")) as 1 | 2 | 3,
+    text: block.text,
+  };
 }
 
 function getDocumentSignature(blocks: DocumentBlock[]): string {

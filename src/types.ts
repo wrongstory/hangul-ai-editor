@@ -1,8 +1,12 @@
+export type HeadingLevel = 1 | 2 | 3;
+
+export type BlockStyle = "paragraph" | `heading-${HeadingLevel}`;
+
 export type DocumentBlock =
   | {
       id: string;
       type: "heading";
-      level: 1 | 2 | 3;
+      level: HeadingLevel;
       text: string;
     }
   | {
