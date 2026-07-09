@@ -267,9 +267,7 @@ textarea {
   display: flex;
   min-height: 0;
   flex: 1;
-  flex-direction: column;
-  gap: 34px;
-  align-items: center;
+  align-items: flex-start;
   overflow: auto;
   padding: 38px 32px 60px;
   background:
@@ -278,7 +276,17 @@ textarea {
     #d3d3d3;
 }
 
+.paged-editor-strip {
+  position: relative;
+  display: flex;
+  gap: var(--page-gap, 34px);
+  width: var(--paged-strip-width, var(--page-width, 820px));
+  min-width: var(--paged-strip-width, var(--page-width, 820px));
+  margin: 0 auto;
+}
+
 .page-sheet {
+  position: relative;
   display: flex;
   flex-direction: column;
   width: var(--page-width, 820px);
@@ -286,12 +294,16 @@ textarea {
   min-height: var(--page-height, 1040px);
   height: var(--page-height, 1040px);
   max-height: var(--page-height, 1040px);
-  margin: 0 auto;
+  margin: 0;
   padding: var(--page-padding-y, 74px) var(--page-padding-x, 76px);
   overflow: hidden;
   border: 1px solid #a9a9a9;
   background: #ffffff;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+.page-frame {
+  pointer-events: none;
 }
 
 .page-title-row {
@@ -343,27 +355,28 @@ textarea {
   font-weight: 700;
 }
 
-.editor-surface {
-  width: 100%;
-  min-height: 0;
-  margin: 0;
-  padding: 0;
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  border: 0;
-  border-radius: 0;
-  background: #ffffff;
-  box-shadow: none;
+.paged-editor-content {
+  position: absolute;
+  top: var(--page-content-top, 184px);
+  left: var(--page-padding-x, 76px);
+  width: var(--paged-content-width, var(--page-content-width, 668px));
+  height: var(--page-content-height, 782px);
+  overflow: hidden;
+  pointer-events: auto;
 }
 
-.tiptap-page .editor-surface {
-  scrollbar-width: thin;
+.paged-editor-content > div {
+  width: 100%;
+  height: 100%;
 }
 
 .tiptap-document {
-  min-height: 100%;
+  height: var(--page-content-height, 782px);
   padding: 0;
+  column-count: var(--page-count, 1);
+  column-fill: auto;
+  column-gap: var(--page-column-gap, 186px);
+  column-width: var(--page-content-width, 668px);
   color: #1d2430;
   outline: 0;
   white-space: pre-wrap;
@@ -425,45 +438,10 @@ textarea {
 .page-footer {
   display: flex;
   justify-content: center;
+  margin-top: auto;
   padding-top: 18px;
   color: #8c9692;
   font-size: 12px;
-}
-
-.page-preview {
-  color: #26313a;
-}
-
-.page-preview-content {
-  flex: 1;
-  overflow: hidden;
-  opacity: 0.72;
-  white-space: pre-wrap;
-  word-break: keep-all;
-}
-
-.page-preview-content p,
-.page-preview-content h2 {
-  margin: 0;
-  padding: 2px 4px;
-}
-
-.page-preview-content p {
-  min-height: 30px;
-  margin: 2px 0;
-  font-size: 16px;
-  line-height: 2;
-}
-
-.page-preview-content h2 {
-  margin: 18px 0 10px;
-  font-size: 20px;
-  font-weight: 800;
-  line-height: 1.55;
-}
-
-.page-preview-content h2:first-child {
-  margin-top: 0;
 }
 
 .document-block {

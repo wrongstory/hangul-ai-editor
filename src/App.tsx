@@ -104,9 +104,14 @@ export function App() {
     () => paginateBlocks(documentState.blocks, pageSettings),
     [documentState.blocks, pageSettings]
   );
+  const pageCount = Math.max(1, documentPages.length);
+  const pageNumbers = useMemo(
+    () => Array.from({ length: pageCount }, (_, index) => index + 1),
+    [pageCount]
+  );
   const pageStyle = useMemo(
-    () => getPageStyle(pageSettings),
-    [pageSettings]
+    () => getPageStyle(pageSettings, pageCount),
+    [pageSettings, pageCount]
   );
   const editor = useEditor({
     extensions: [
@@ -483,17 +488,10 @@ export function App() {
         </div>
 
         <div className="document-workbench">
-          {documentPages.map((page, pageIndex) => (
-            <div
-              className={[
-                "page-sheet",
-                pageIndex === 0 ? "tiptap-page" : "page-preview",
-              ].join(" ")}
-              key={pageIndex}
-              style={pageStyle}
-            >
-              {pageIndex === 0 ? (
-                <>
+          <div className="paged-editor-strip" style={pageStyle}>
+            {pageNumbers.map((pageNumber) => (
+              <div className="page-sheet page-frame" key={pageNumber}>
+                {pageNumber === 1 ? (
                   <header className="page-title-row">
                     <div>
                       <span className="eyebrow">HWPX Draft</span>
@@ -505,27 +503,16 @@ export function App() {
                       {documentState.sourceFormat.toUpperCase()}
                     </div>
                   </header>
-
-                  <div className="editor-surface">
-                    <EditorContent editor={editor} />
-                  </div>
-                </>
-              ) : (
-                <div className="page-preview-content" aria-hidden="true">
-                  {page.map((block) =>
-                    block.type === "heading" ? (
-                      <h2 key={block.id}>{block.text}</h2>
-                    ) : (
-                      <p key={block.id}>{block.text}</p>
-                    )
-                  )}
-                </div>
-              )}
-              <footer className="page-footer" aria-label={`페이지 ${pageIndex + 1}`}>
-                {pageIndex + 1} / {documentPages.length}
-              </footer>
+                ) : null}
+                <footer className="page-footer" aria-label={`페이지 ${pageNumber}`}>
+                  {pageNumber} / {pageCount}
+                </footer>
+              </div>
+            ))}
+            <div className="paged-editor-content">
+              <EditorContent editor={editor} />
             </div>
-          ))}
+          </div>
         </div>
       </section>
 
@@ -752,26 +739,40 @@ function getPageMetrics(settings: PageSettings) {
   const width = isLandscape ? paper.height : paper.width;
   const height = isLandscape ? paper.width : paper.height;
   const contentWidth = width - margin.x * 2;
-  const contentHeight = height - margin.y * 2 - 110;
+  const contentTop = margin.y + 110;
+  const contentHeight = height - contentTop - margin.y;
 
   return {
     width,
     height,
     contentWidth,
+    contentTop,
     contentHeight,
     marginX: margin.x,
     marginY: margin.y,
   };
 }
 
-function getPageStyle(settings: PageSettings): CSSProperties {
+function getPageStyle(settings: PageSettings, pageCount: number): CSSProperties {
   const metrics = getPageMetrics(settings);
+  const pageGap = 34;
+  const columnGap = pageGap + metrics.marginX * 2;
 
   return {
     "--page-width": `${metrics.width}px`,
     "--page-height": `${metrics.height}px`,
     "--page-padding-x": `${metrics.marginX}px`,
     "--page-padding-y": `${metrics.marginY}px`,
+    "--page-content-width": `${metrics.contentWidth}px`,
+    "--page-content-height": `${metrics.contentHeight}px`,
+    "--page-content-top": `${metrics.contentTop}px`,
+    "--page-count": pageCount,
+    "--page-gap": `${pageGap}px`,
+    "--page-column-gap": `${columnGap}px`,
+    "--paged-strip-width": `${metrics.width * pageCount + pageGap * (pageCount - 1)}px`,
+    "--paged-content-width": `${
+      metrics.contentWidth * pageCount + columnGap * (pageCount - 1)
+    }px`,
   } as CSSProperties;
 }
 
