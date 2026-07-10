@@ -1,8 +1,12 @@
+export type HeadingLevel = 1 | 2 | 3;
+
+export type BlockStyle = "paragraph" | `heading-${HeadingLevel}`;
+
 export type DocumentBlock =
   | {
       id: string;
       type: "heading";
-      level: 1 | 2 | 3;
+      level: HeadingLevel;
       text: string;
     }
   | {
@@ -25,9 +29,26 @@ export type ChatMessage = {
 
 export type AiProposal = {
   id: string;
-  targetBlockId: string;
+  scope: "document";
+  targetLabel: string;
+  prompt: string;
+  beforeBlocks: DocumentBlock[];
+  afterBlocks: DocumentBlock[];
   before: string;
   after: string;
   summary: string;
 };
 
+export type ChangeHistoryEntry = {
+  id: string;
+  proposalId: string;
+  scope: "document";
+  targetLabel: string;
+  prompt: string;
+  beforeBlocks: DocumentBlock[];
+  afterBlocks: DocumentBlock[];
+  before: string;
+  after: string;
+  summary: string;
+  appliedAt: string;
+};

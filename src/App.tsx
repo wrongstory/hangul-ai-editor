@@ -1,13 +1,18 @@
 import {
+  AlignCenter,
   AlignJustify,
   AlignLeft,
+  AlignRight,
   BarChart3,
+  Bold,
   Check,
   Clipboard,
   Columns3,
+  History,
   FileText,
   FolderOpen,
   Image,
+  Italic,
   Layout,
   Lock,
   MessageSquareText,
@@ -18,39 +23,472 @@ import {
   Search,
   Table,
   Type,
+  Underline,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
+import { EditorContent, useEditor } from "@tiptap/react";
+import { Extension, Mark, mergeAttributes } from "@tiptap/core";
+import type { Editor, JSONContent } from "@tiptap/core";
+import { Fragment, Slice } from "@tiptap/pm/model";
+import type { Node as ProseMirrorNode, Schema } from "@tiptap/pm/model";
+import StarterKit from "@tiptap/starter-kit";
 import { createMockProposal } from "./ai/mockAi";
+import { parseHwpxFile } from "./hwpx/parseHwpx";
 import { initialDocument } from "./mockDocument";
-import type { AiProposal, ChatMessage, DocumentBlock, HangulDocument } from "./types";
+import type {
+  AiProposal,
+  BlockStyle,
+  ChangeHistoryEntry,
+  ChatMessage,
+  DocumentBlock,
+  HangulDocument,
+} from "./types";
+
+type PaperSize = "a4" | "b5" | "letter";
+type PageOrientation = "portrait" | "landscape";
+type PageMarginPreset = "normal" | "narrow" | "wide";
+
+type PageSettings = {
+  paperSize: PaperSize;
+  orientation: PageOrientation;
+  marginPreset: PageMarginPreset;
+};
+
+type InlineFormattingState = {
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  fontFamily: string;
+  fontSize: string;
+  textAlign: TextAlign;
+};
+
+type TextAlign = "left" | "center" | "right" | "justify";
+
+type ZoomLevel = "100%" | "125%" | "160%" | "200%";
+
+const UnderlineMark = Mark.create({
+  name: "underline",
+
+  parseHTML() {
+    return [
+      { tag: "u" },
+      { style: "text-decoration-line=underline" },
+      { style: "text-decoration=underline" },
+    ];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ["u", mergeAttributes(HTMLAttributes), 0];
+  },
+});
+
+const TextStyleMark = Mark.create({
+  name: "textStyle",
+
+  addAttributes() {
+    return {
+      fontFamily: {
+        default: null,
+        parseHTML: (element) => element.style.fontFamily.replace(/['"]/g, ""),
+        renderHTML: (attributes) =>
+          attributes.fontFamily ? { style: `font-family: ${attributes.fontFamily}` } : {},
+      },
+      fontSize: {
+        default: null,
+        parseHTML: (element) => element.style.fontSize.replace("pt", ""),
+        renderHTML: (attributes) =>
+          attributes.fontSize ? { style: `font-size: ${attributes.fontSize}pt` } : {},
+      },
+    };
+  },
+
+  parseHTML() {
+    return [{ tag: "span" }];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ["span", mergeAttributes(HTMLAttributes), 0];
+  },
+});
+
+const TextAlignExtension = Extension.create({
+  name: "textAlign",
+
+  addGlobalAttributes() {
+    return [
+      {
+        types: ["paragraph", "heading"],
+        attributes: {
+          textAlign: {
+            default: "left",
+            parseHTML: (element) => element.style.textAlign || "left",
+            renderHTML: (attributes) => ({
+              style: `text-align: ${attributes.textAlign ?? "left"}`,
+            }),
+          },
+        },
+      },
+    ];
+  },
+});
+
+const defaultFontFamily = "함초롬바탕";
+const defaultFontSize = "14.0";
+
+const paperSizeOptions: Record<PaperSize, { label: string; width: number; height: number }> = {
+  a4: { label: "A4", width: 820, height: 1040 },
+  b5: { label: "B5", width: 710, height: 1000 },
+  letter: { label: "Letter", width: 816, height: 1056 },
+};
+
+const pageMarginOptions: Record<PageMarginPreset, { label: string; x: number; y: number }> = {
+  normal: { label: "보통 여백", x: 76, y: 74 },
+  narrow: { label: "좁은 여백", x: 48, y: 48 },
+  wide: { label: "넓은 여백", x: 96, y: 86 },
+};
 
 export function App() {
   const [documentState, setDocumentState] = useState<HangulDocument>(initialDocument);
-  const [selectedBlockId, setSelectedBlockId] = useState<string>(initialDocument.blocks[1].id);
+  const [activeBlockId, setActiveBlockId] = useState<string>(initialDocument.blocks[1].id);
+  const [activeBlockStyle, setActiveBlockStyle] = useState<BlockStyle>(
+    getBlockStyle(initialDocument.blocks[1])
+  );
+  const [inlineFormatting, setInlineFormatting] = useState<InlineFormattingState>({
+    bold: false,
+    italic: false,
+    underline: false,
+    fontFamily: defaultFontFamily,
+    fontSize: defaultFontSize,
+    textAlign: "left",
+  });
+  const [zoomLevel, setZoomLevel] = useState<ZoomLevel>("160%");
+  const [pageSettings, setPageSettings] = useState<PageSettings>({
+    paperSize: "a4",
+    orientation: "portrait",
+    marginPreset: "normal",
+  });
+  const [fileStatus, setFileStatus] = useState("샘플 문서로 시작됨");
+  const [isOpeningFile, setIsOpeningFile] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "welcome",
       role: "assistant",
-      content: "문단을 선택하고 원하는 편집을 요청하면 수정안을 만들어둘게요.",
+      content: "문서를 열고 원하는 편집을 요청하면 전체 문서를 기준으로 수정안을 만들어둘게요.",
     },
   ]);
   const [prompt, setPrompt] = useState("");
   const [proposal, setProposal] = useState<AiProposal | undefined>();
+  const [changeHistory, setChangeHistory] = useState<ChangeHistoryEntry[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const blocksRef = useRef<DocumentBlock[]>(initialDocument.blocks);
+  const editorSyncSignatureRef = useRef(getDocumentSignature(initialDocument.blocks));
 
-  const selectedBlock = useMemo(
-    () => documentState.blocks.find((block) => block.id === selectedBlockId),
-    [documentState.blocks, selectedBlockId]
+  const activeBlock = useMemo(
+    () => documentState.blocks.find((block) => block.id === activeBlockId),
+    [documentState.blocks, activeBlockId]
   );
+  const currentDocumentSignature = useMemo(
+    () => getDocumentSignature(documentState.blocks),
+    [documentState.blocks]
+  );
+  const proposalIsStale =
+    proposal !== undefined &&
+    getDocumentSignature(proposal.beforeBlocks) !== currentDocumentSignature;
+  const latestChange = changeHistory[0];
+  const documentPages = useMemo(
+    () => paginateBlocks(documentState.blocks, pageSettings),
+    [documentState.blocks, pageSettings]
+  );
+  const pageCount = Math.max(1, documentPages.length);
+  const pageNumbers = useMemo(
+    () => Array.from({ length: pageCount }, (_, index) => index + 1),
+    [pageCount]
+  );
+  const pageStyle = useMemo(
+    () => getPageStyle(pageSettings, pageCount, zoomLevel),
+    [pageSettings, pageCount, zoomLevel]
+  );
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({
+        heading: {
+          levels: [1, 2, 3],
+        },
+      }),
+      UnderlineMark,
+      TextStyleMark,
+      TextAlignExtension,
+    ],
+    content: blocksToTiptapDocument(initialDocument.blocks),
+    editorProps: {
+      attributes: {
+        class: "tiptap-document",
+        "aria-label": "문서 본문",
+      },
+      handlePaste(view, event) {
+        const plainText = event.clipboardData?.getData("text/plain");
 
-  function updateBlockText(blockId: string, text: string) {
+        if (!plainText) {
+          return false;
+        }
+
+        const pastedNodes = plainTextToParagraphNodes(plainText, view.state.schema);
+
+        if (pastedNodes.length === 0) {
+          return false;
+        }
+
+        event.preventDefault();
+        view.dispatch(
+          view.state.tr
+            .replaceSelection(new Slice(Fragment.fromArray(pastedNodes), 0, 0))
+            .scrollIntoView()
+        );
+
+        return true;
+      },
+    },
+    onUpdate: ({ editor: currentEditor }) => {
+      syncBlocksFromEditor(currentEditor);
+    },
+    onSelectionUpdate: ({ editor: currentEditor }) => {
+      syncActiveBlockFromEditor(currentEditor);
+      syncInlineFormattingFromEditor(currentEditor);
+    },
+    onCreate: ({ editor: currentEditor }) => {
+      syncActiveBlockFromEditor(currentEditor);
+      syncInlineFormattingFromEditor(currentEditor);
+    },
+  });
+
+  useEffect(() => {
+    blocksRef.current = documentState.blocks;
+  }, [documentState.blocks]);
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    const nextSignature = getDocumentSignature(documentState.blocks);
+
+    if (nextSignature === editorSyncSignatureRef.current) {
+      return;
+    }
+
+    editorSyncSignatureRef.current = nextSignature;
+    editor.commands.setContent(blocksToTiptapDocument(documentState.blocks), {
+      emitUpdate: false,
+    });
+    syncActiveBlockFromEditor(editor);
+    syncInlineFormattingFromEditor(editor);
+  }, [documentState.blocks, editor]);
+
+  function syncBlocksFromEditor(currentEditor: Editor) {
+    const nextBlocks = tiptapDocumentToBlocks(
+      currentEditor.getJSON(),
+      blocksRef.current
+    );
+
+    blocksRef.current = nextBlocks;
+    editorSyncSignatureRef.current = getDocumentSignature(nextBlocks);
+
     setDocumentState((current) => ({
       ...current,
-      blocks: current.blocks.map((block) =>
-        block.id === blockId ? { ...block, text } : block
-      ),
+      blocks: nextBlocks,
     }));
+    syncActiveBlockFromEditor(currentEditor, nextBlocks);
+    syncInlineFormattingFromEditor(currentEditor);
+  }
+
+  function syncActiveBlockFromEditor(
+    currentEditor: Editor,
+    blocks = blocksRef.current
+  ) {
+    const blockIndex = getEditorSelectionBlockIndex(currentEditor);
+    const block = blocks[blockIndex] ?? blocks[0];
+
+    if (!block) {
+      setActiveBlockStyle("paragraph");
+      return;
+    }
+
+    setActiveBlockId(block.id);
+    setActiveBlockStyle(getBlockStyle(block));
+  }
+
+  function syncInlineFormattingFromEditor(currentEditor: Editor) {
+    setInlineFormatting({
+      bold: currentEditor.isActive("bold"),
+      italic: currentEditor.isActive("italic"),
+      underline: currentEditor.isActive("underline"),
+      fontFamily:
+        currentEditor.getAttributes("textStyle").fontFamily ?? defaultFontFamily,
+      fontSize: currentEditor.getAttributes("textStyle").fontSize ?? defaultFontSize,
+      textAlign: normalizeTextAlign(
+        currentEditor.getAttributes("paragraph").textAlign ??
+          currentEditor.getAttributes("heading").textAlign
+      ),
+    });
+  }
+
+  function toggleInlineFormatting(mark: keyof InlineFormattingState) {
+    if (!editor) {
+      return;
+    }
+
+    editor.chain().focus().toggleMark(mark).run();
+    syncInlineFormattingFromEditor(editor);
+  }
+
+  function updateFontFamily(fontFamily: string) {
+    if (!editor) {
+      return;
+    }
+
+    editor.chain().focus().setMark("textStyle", { fontFamily }).run();
+    setInlineFormatting((current) => ({ ...current, fontFamily }));
+  }
+
+  function updateFontSize(fontSize: string) {
+    if (!editor || !isValidFontSize(fontSize)) {
+      return;
+    }
+
+    editor.chain().focus().setMark("textStyle", { fontSize }).run();
+    setInlineFormatting((current) => ({ ...current, fontSize }));
+  }
+
+  function updateTextAlign(textAlign: TextAlign) {
+    if (!editor) {
+      return;
+    }
+
+    applyTextAlign(editor, textAlign);
+    setInlineFormatting((current) => ({ ...current, textAlign }));
+  }
+
+  function updateActiveBlockStyle(style: BlockStyle) {
+    if (!editor) {
+      return;
+    }
+
+    if (style === "paragraph") {
+      editor.chain().focus().setParagraph().run();
+    } else {
+      editor
+        .chain()
+        .focus()
+        .setHeading({ level: Number(style.replace("heading-", "")) as 1 | 2 | 3 })
+        .run();
+    }
+
+    setActiveBlockStyle(style);
+  }
+
+  function createNewDocument() {
+    const nextDocument: HangulDocument = {
+      title: "새 문서",
+      sourceFormat: "draft",
+      blocks: [
+        {
+          id: crypto.randomUUID(),
+          type: "paragraph",
+          text: "",
+        },
+      ],
+    };
+
+    setDocumentState(nextDocument);
+    setActiveBlockId(nextDocument.blocks[0].id);
+    setActiveBlockStyle("paragraph");
+    setInlineFormatting({
+      bold: false,
+      italic: false,
+      underline: false,
+      fontFamily: defaultFontFamily,
+      fontSize: defaultFontSize,
+      textAlign: "left",
+    });
+    setProposal(undefined);
+    setChangeHistory([]);
+    setFileStatus("새 문서로 시작됨");
+  }
+
+  function saveDocumentSnapshot() {
+    const payload = JSON.stringify(
+      {
+        document: documentState,
+        pageSettings,
+        savedAt: new Date().toISOString(),
+      },
+      null,
+      2
+    );
+    const blob = new Blob([payload], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${documentState.title || "hangul-document"}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setFileStatus(`${documentState.title}.json 저장됨`);
+  }
+
+  async function openHwpxFile(file: File | undefined) {
+    if (!file) {
+      return;
+    }
+
+    if (!file.name.toLowerCase().endsWith(".hwpx")) {
+      setFileStatus("지원하지 않는 파일입니다. .hwpx 파일을 선택해 주세요.");
+      return;
+    }
+
+    setIsOpeningFile(true);
+    setFileStatus(`${file.name} 여는 중...`);
+
+    try {
+      const nextDocument = await parseHwpxFile(file);
+      setDocumentState(nextDocument);
+      setActiveBlockId(nextDocument.blocks[0].id);
+      setProposal(undefined);
+      setChangeHistory([]);
+      setFileStatus(`${file.name}에서 ${nextDocument.blocks.length}개 문단을 불러왔습니다.`);
+      setMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: "system",
+          content: `${file.name} 파일을 열었습니다. 전체 문서를 기준으로 AI 편집을 요청할 수 있습니다.`,
+        },
+      ]);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "HWPX 파일을 여는 중 오류가 발생했습니다.";
+
+      setFileStatus(message);
+      setMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: "system",
+          content: message,
+        },
+      ]);
+    } finally {
+      setIsOpeningFile(false);
+
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
   }
 
   function submitPrompt() {
@@ -60,7 +498,7 @@ export function App() {
       return;
     }
 
-    const nextProposal = createMockProposal(trimmedPrompt, selectedBlock);
+    const nextProposal = createMockProposal(trimmedPrompt, documentState);
 
     setMessages((current) => [
       ...current,
@@ -68,9 +506,7 @@ export function App() {
       {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: nextProposal
-          ? "선택 문단에 대한 수정안을 만들었습니다. 적용 전에 내용을 확인해 주세요."
-          : "먼저 왼쪽에서 수정할 문단을 선택해 주세요.",
+        content: "전체 문서에 대한 수정안을 만들었습니다. 적용 전에 내용을 확인해 주세요.",
       },
     ]);
     setProposal(nextProposal);
@@ -78,11 +514,42 @@ export function App() {
   }
 
   function applyProposal() {
-    if (!proposal) {
+    if (!proposal || proposalIsStale) {
+      if (proposalIsStale) {
+        setMessages((current) => [
+          ...current,
+          {
+            id: crypto.randomUUID(),
+            role: "system",
+            content: "제안 생성 후 문서가 변경되어 적용하지 않았습니다. 다시 요청해 주세요.",
+          },
+        ]);
+      }
+
       return;
     }
 
-    updateBlockText(proposal.targetBlockId, proposal.after);
+    setDocumentState((current) => ({
+      ...current,
+      blocks: proposal.afterBlocks.map((block) => ({ ...block })),
+    }));
+    setActiveBlockId(proposal.afterBlocks[0]?.id ?? activeBlockId);
+    setChangeHistory((current) => [
+      {
+        id: crypto.randomUUID(),
+        proposalId: proposal.id,
+        scope: proposal.scope,
+        targetLabel: proposal.targetLabel,
+        prompt: proposal.prompt,
+        beforeBlocks: proposal.beforeBlocks.map((block) => ({ ...block })),
+        afterBlocks: proposal.afterBlocks.map((block) => ({ ...block })),
+        before: proposal.before,
+        after: proposal.after,
+        summary: proposal.summary,
+        appliedAt: new Date().toISOString(),
+      },
+      ...current,
+    ]);
     setMessages((current) => [
       ...current,
       {
@@ -92,6 +559,29 @@ export function App() {
       },
     ]);
     setProposal(undefined);
+  }
+
+  function undoLatestChange() {
+    const [latest, ...remaining] = changeHistory;
+
+    if (!latest) {
+      return;
+    }
+
+    setDocumentState((current) => ({
+      ...current,
+      blocks: latest.beforeBlocks.map((block) => ({ ...block })),
+    }));
+    setActiveBlockId(latest.beforeBlocks[0]?.id ?? activeBlockId);
+    setChangeHistory(remaining);
+    setMessages((current) => [
+      ...current,
+      {
+        id: crypto.randomUUID(),
+        role: "system",
+        content: "최근 AI 적용 변경을 되돌렸습니다.",
+      },
+    ]);
   }
 
   function cancelProposal() {
@@ -112,42 +602,187 @@ export function App() {
         <HangulShellHeader documentTitle={documentState.title} />
 
         <div className="quick-toolbar" aria-label="빠른 실행 도구">
-          <button type="button" title="새 문서">
+          <button type="button" title="새 문서" onClick={createNewDocument}>
             <FileText size={15} aria-hidden="true" />
           </button>
-          <button type="button" title="불러오기">
+          <button
+            type="button"
+            title="HWPX 불러오기"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isOpeningFile}
+          >
             <FolderOpen size={15} aria-hidden="true" />
           </button>
-          <button type="button" title="저장">
+          <input
+            ref={fileInputRef}
+            className="file-input"
+            type="file"
+            accept=".hwpx,application/zip"
+            aria-label="HWPX 파일 선택"
+            onChange={(event) => {
+              void openHwpxFile(event.target.files?.[0]);
+            }}
+          />
+          <button type="button" title="저장" onClick={saveDocumentSnapshot}>
             <Save size={15} aria-hidden="true" />
           </button>
           <span className="toolbar-separator" />
-          <button type="button" title="인쇄">
+          <button type="button" title="인쇄" onClick={() => window.print()}>
             <Printer size={15} aria-hidden="true" />
           </button>
-          <select aria-label="문단 스타일" defaultValue="바탕글">
-            <option>바탕글</option>
-            <option>제목 1</option>
-            <option>본문</option>
+          <select
+            aria-label="문단 스타일"
+            value={activeBlockStyle}
+            onChange={(event) => {
+              updateActiveBlockStyle(event.target.value as BlockStyle);
+            }}
+          >
+            <option value="paragraph">본문</option>
+            <option value="heading-1">제목 1</option>
+            <option value="heading-2">제목 2</option>
+            <option value="heading-3">제목 3</option>
           </select>
-          <select aria-label="글꼴" defaultValue="함초롬바탕">
+          <select
+            aria-label="글꼴"
+            value={inlineFormatting.fontFamily}
+            onChange={(event) => updateFontFamily(event.target.value)}
+          >
             <option>함초롬바탕</option>
             <option>맑은 고딕</option>
             <option>굴림</option>
           </select>
-          <input aria-label="글자 크기" defaultValue="14.0" />
+          <input
+            aria-label="글자 크기"
+            inputMode="decimal"
+            value={inlineFormatting.fontSize}
+            onChange={(event) => {
+              const nextFontSize = event.target.value;
+              setInlineFormatting((current) => ({
+                ...current,
+                fontSize: nextFontSize,
+              }));
+              updateFontSize(nextFontSize);
+            }}
+          />
           <span className="unit-label">pt</span>
-          <button type="button" title="왼쪽 정렬">
+          <button
+            className={inlineFormatting.bold ? "active" : ""}
+            type="button"
+            title="굵게"
+            aria-pressed={inlineFormatting.bold}
+            onClick={() => toggleInlineFormatting("bold")}
+          >
+            <Bold size={15} aria-hidden="true" />
+          </button>
+          <button
+            className={inlineFormatting.italic ? "active" : ""}
+            type="button"
+            title="기울임"
+            aria-pressed={inlineFormatting.italic}
+            onClick={() => toggleInlineFormatting("italic")}
+          >
+            <Italic size={15} aria-hidden="true" />
+          </button>
+          <button
+            className={inlineFormatting.underline ? "active" : ""}
+            type="button"
+            title="밑줄"
+            aria-pressed={inlineFormatting.underline}
+            onClick={() => toggleInlineFormatting("underline")}
+          >
+            <Underline size={15} aria-hidden="true" />
+          </button>
+          <button
+            className={inlineFormatting.textAlign === "left" ? "active" : ""}
+            type="button"
+            title="왼쪽 정렬"
+            aria-pressed={inlineFormatting.textAlign === "left"}
+            onClick={() => updateTextAlign("left")}
+          >
             <AlignLeft size={15} aria-hidden="true" />
           </button>
-          <button type="button" title="양쪽 정렬">
+          <button
+            className={inlineFormatting.textAlign === "center" ? "active" : ""}
+            type="button"
+            title="가운데 정렬"
+            aria-pressed={inlineFormatting.textAlign === "center"}
+            onClick={() => updateTextAlign("center")}
+          >
+            <AlignCenter size={15} aria-hidden="true" />
+          </button>
+          <button
+            className={inlineFormatting.textAlign === "right" ? "active" : ""}
+            type="button"
+            title="오른쪽 정렬"
+            aria-pressed={inlineFormatting.textAlign === "right"}
+            onClick={() => updateTextAlign("right")}
+          >
+            <AlignRight size={15} aria-hidden="true" />
+          </button>
+          <button
+            className={inlineFormatting.textAlign === "justify" ? "active" : ""}
+            type="button"
+            title="양쪽 정렬"
+            aria-pressed={inlineFormatting.textAlign === "justify"}
+            onClick={() => updateTextAlign("justify")}
+          >
             <AlignJustify size={15} aria-hidden="true" />
           </button>
-          <select aria-label="확대 비율" defaultValue="160%">
+          <select
+            aria-label="확대 비율"
+            value={zoomLevel}
+            onChange={(event) => setZoomLevel(event.target.value as ZoomLevel)}
+          >
             <option>100%</option>
             <option>125%</option>
             <option>160%</option>
             <option>200%</option>
+          </select>
+          <span className="toolbar-separator" />
+          <select
+            aria-label="용지 크기"
+            value={pageSettings.paperSize}
+            onChange={(event) => {
+              setPageSettings((current) => ({
+                ...current,
+                paperSize: event.target.value as PaperSize,
+              }));
+            }}
+          >
+            {Object.entries(paperSizeOptions).map(([value, option]) => (
+              <option key={value} value={value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="용지 방향"
+            value={pageSettings.orientation}
+            onChange={(event) => {
+              setPageSettings((current) => ({
+                ...current,
+                orientation: event.target.value as PageOrientation,
+              }));
+            }}
+          >
+            <option value="portrait">세로</option>
+            <option value="landscape">가로</option>
+          </select>
+          <select
+            aria-label="쪽 여백"
+            value={pageSettings.marginPreset}
+            onChange={(event) => {
+              setPageSettings((current) => ({
+                ...current,
+                marginPreset: event.target.value as PageMarginPreset,
+              }));
+            }}
+          >
+            {Object.entries(pageMarginOptions).map(([value, option]) => (
+              <option key={value} value={value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </div>
 
@@ -158,28 +793,29 @@ export function App() {
         </div>
 
         <div className="document-workbench">
-          <div className="page-sheet">
-            <header className="page-title-row">
-              <div>
-                <span className="eyebrow">HWPX Draft</span>
-                <h1>{documentState.title}</h1>
+          <div className="paged-editor-strip" style={pageStyle}>
+            {pageNumbers.map((pageNumber) => (
+              <div className="page-sheet page-frame" key={pageNumber}>
+                {pageNumber === 1 ? (
+                  <header className="page-title-row">
+                    <div>
+                      <span className="eyebrow">HWPX Draft</span>
+                      <h1>{documentState.title}</h1>
+                      <p className="file-status">{fileStatus}</p>
+                    </div>
+                    <div className="format-badge">
+                      <FileText size={15} aria-hidden="true" />
+                      {documentState.sourceFormat.toUpperCase()}
+                    </div>
+                  </header>
+                ) : null}
+                <footer className="page-footer" aria-label={`페이지 ${pageNumber}`}>
+                  {pageNumber} / {pageCount}
+                </footer>
               </div>
-              <div className="format-badge">
-                <FileText size={15} aria-hidden="true" />
-                {documentState.sourceFormat.toUpperCase()}
-              </div>
-            </header>
-
-            <div className="editor-surface">
-              {documentState.blocks.map((block) => (
-                <DocumentBlockEditor
-                  key={block.id}
-                  block={block}
-                  selected={block.id === selectedBlockId}
-                  onSelect={() => setSelectedBlockId(block.id)}
-                  onChange={(text) => updateBlockText(block.id, text)}
-                />
-              ))}
+            ))}
+            <div className="paged-editor-content">
+              <EditorContent editor={editor} />
             </div>
           </div>
         </div>
@@ -190,9 +826,37 @@ export function App() {
           <MessageSquareText size={20} aria-hidden="true" />
           <div>
             <h2>AI Sidebar</h2>
-            <p>{selectedBlock ? "선택 문단 준비됨" : "문단 선택 필요"}</p>
+            <p>전체 문서 기준 작업</p>
           </div>
         </header>
+
+        <section className="workflow-status" aria-label="AI 편집 상태">
+          <div>
+            <span className="eyebrow">Document</span>
+            <strong>{documentState.blocks.length}개 블록 · {documentState.sourceFormat.toUpperCase()}</strong>
+            <p>{activeBlock ? `현재 커서 위치: ${getBlockLabel(activeBlock)}` : "문서 전체를 기준으로 작업합니다."}</p>
+          </div>
+          <div className="history-summary">
+            <div>
+              <span className="eyebrow">History</span>
+              <strong>{changeHistory.length}개 적용됨</strong>
+              <p>
+                {latestChange
+                  ? `${latestChange.targetLabel} · ${formatAppliedTime(latestChange.appliedAt)}`
+                  : "아직 적용된 AI 변경이 없습니다."}
+              </p>
+            </div>
+            <button
+              className="icon-button"
+              type="button"
+              onClick={undoLatestChange}
+              disabled={!latestChange}
+              title="최근 AI 변경 되돌리기"
+            >
+              <History size={18} aria-hidden="true" />
+            </button>
+          </div>
+        </section>
 
         <div className="chat-log">
           {messages.map((message) => (
@@ -204,6 +868,11 @@ export function App() {
 
         {proposal ? (
           <section className="proposal" aria-label="수정안 미리보기">
+            <div className="proposal-meta">
+              <span>{proposal.targetLabel}</span>
+              <strong>{proposal.summary}</strong>
+              <p>{proposal.prompt}</p>
+            </div>
             <div>
               <span className="eyebrow">Before</span>
               <p>{proposal.before}</p>
@@ -212,8 +881,19 @@ export function App() {
               <span className="eyebrow">After</span>
               <p>{proposal.after}</p>
             </div>
+            {proposalIsStale ? (
+              <p className="proposal-warning">
+                문서가 제안 생성 후 변경되었습니다. 현재 제안은 다시 생성해야 적용할 수 있습니다.
+              </p>
+            ) : null}
             <div className="proposal-actions">
-              <button className="icon-button apply" type="button" onClick={applyProposal} title="적용">
+              <button
+                className="icon-button apply"
+                type="button"
+                onClick={applyProposal}
+                disabled={proposalIsStale}
+                title="적용"
+              >
                 <Check size={18} aria-hidden="true" />
               </button>
               <button className="icon-button" type="button" onClick={cancelProposal} title="취소">
@@ -245,6 +925,283 @@ export function App() {
       </aside>
     </main>
   );
+}
+
+function getBlockLabel(block: DocumentBlock): string {
+  if (block.type === "heading") {
+    return `H${block.level} 제목`;
+  }
+
+  return "본문 문단";
+}
+
+function getBlockStyle(block: DocumentBlock): BlockStyle {
+  if (block.type === "heading") {
+    return `heading-${block.level}`;
+  }
+
+  return "paragraph";
+}
+
+function getDocumentSignature(blocks: DocumentBlock[]): string {
+  return blocks
+    .map((block) => `${block.id}:${block.type}:${block.text}`)
+    .join("\n");
+}
+
+function blocksToTiptapDocument(blocks: DocumentBlock[]): JSONContent {
+  return {
+    type: "doc",
+    content: blocks.map((block) => {
+      const content = block.text
+        ? [
+            {
+              type: "text",
+              text: block.text,
+            },
+          ]
+        : undefined;
+
+      if (block.type === "heading") {
+        return {
+          type: "heading",
+          attrs: {
+            level: block.level,
+          },
+          content,
+        };
+      }
+
+      return {
+        type: "paragraph",
+        content,
+      };
+    }),
+  };
+}
+
+function tiptapDocumentToBlocks(
+  documentJson: JSONContent,
+  previousBlocks: DocumentBlock[]
+): DocumentBlock[] {
+  const content = documentJson.content ?? [];
+  const blocks = content
+    .filter((node) => node.type === "heading" || node.type === "paragraph")
+    .map((node, index): DocumentBlock => {
+      const previousBlock = previousBlocks[index];
+      const id = previousBlock?.id ?? crypto.randomUUID();
+      const text = getTiptapNodeText(node);
+
+      if (node.type === "heading") {
+        const level = normalizeHeadingLevel(node.attrs?.level);
+
+        return {
+          id,
+          type: "heading",
+          level,
+          text,
+        };
+      }
+
+      return {
+        id,
+        type: "paragraph",
+        text,
+      };
+    });
+
+  return blocks.length > 0
+    ? blocks
+    : [
+        {
+          id: previousBlocks[0]?.id ?? crypto.randomUUID(),
+          type: "paragraph",
+          text: "",
+        },
+      ];
+}
+
+function plainTextToParagraphNodes(
+  value: string,
+  schema: Schema
+): ProseMirrorNode[] {
+  return normalizePastedText(value)
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line, index, lines) => line.length > 0 || index < lines.length - 1)
+    .map((line) =>
+      schema.nodes.paragraph.create(
+        undefined,
+        line.length > 0 ? schema.text(line) : undefined
+      )
+    );
+}
+
+function normalizePastedText(value: string): string {
+  return value
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/\t/g, "  ");
+}
+
+function getTiptapNodeText(node: JSONContent): string {
+  if (typeof node.text === "string") {
+    return node.text;
+  }
+
+  return (node.content ?? []).map(getTiptapNodeText).join("");
+}
+
+function normalizeHeadingLevel(value: unknown): 1 | 2 | 3 {
+  return value === 1 || value === 2 || value === 3 ? value : 1;
+}
+
+function normalizeTextAlign(value: unknown): TextAlign {
+  return value === "center" || value === "right" || value === "justify"
+    ? value
+    : "left";
+}
+
+function isValidFontSize(value: string): boolean {
+  const numericValue = Number(value);
+
+  return Number.isFinite(numericValue) && numericValue >= 6 && numericValue <= 96;
+}
+
+function applyTextAlign(editor: Editor, textAlign: TextAlign) {
+  const { state, view } = editor;
+  const { from, to } = state.selection;
+  const transaction = state.tr;
+  let changed = false;
+
+  state.doc.nodesBetween(from, to, (node, position) => {
+    if (node.type.name !== "paragraph" && node.type.name !== "heading") {
+      return;
+    }
+
+    transaction.setNodeMarkup(position, undefined, {
+      ...node.attrs,
+      textAlign,
+    });
+    changed = true;
+  });
+
+  if (changed) {
+    view.dispatch(transaction.scrollIntoView());
+  }
+}
+
+function getEditorSelectionBlockIndex(editor: Editor): number {
+  return Math.max(0, editor.state.selection.$from.index(0));
+}
+
+function getPageMetrics(settings: PageSettings) {
+  const paper = paperSizeOptions[settings.paperSize];
+  const margin = pageMarginOptions[settings.marginPreset];
+  const isLandscape = settings.orientation === "landscape";
+  const width = isLandscape ? paper.height : paper.width;
+  const height = isLandscape ? paper.width : paper.height;
+  const contentWidth = width - margin.x * 2;
+  const contentTop = margin.y + 110;
+  const contentHeight = height - contentTop - margin.y;
+
+  return {
+    width,
+    height,
+    contentWidth,
+    contentTop,
+    contentHeight,
+    marginX: margin.x,
+    marginY: margin.y,
+  };
+}
+
+function getPageStyle(
+  settings: PageSettings,
+  pageCount: number,
+  zoomLevel: ZoomLevel
+): CSSProperties {
+  const metrics = getPageMetrics(settings);
+  const pageGap = 34;
+  const columnGap = pageGap + metrics.marginX * 2;
+  const zoom = Number(zoomLevel.replace("%", "")) / 100;
+
+  return {
+    "--page-width": `${metrics.width}px`,
+    "--page-height": `${metrics.height}px`,
+    "--page-padding-x": `${metrics.marginX}px`,
+    "--page-padding-y": `${metrics.marginY}px`,
+    "--page-content-width": `${metrics.contentWidth}px`,
+    "--page-content-height": `${metrics.contentHeight}px`,
+    "--page-content-top": `${metrics.contentTop}px`,
+    "--page-count": pageCount,
+    "--page-gap": `${pageGap}px`,
+    "--page-column-gap": `${columnGap}px`,
+    "--paged-strip-width": `${metrics.width * pageCount + pageGap * (pageCount - 1)}px`,
+    "--paged-content-width": `${
+      metrics.contentWidth * pageCount + columnGap * (pageCount - 1)
+    }px`,
+    "--editor-zoom": zoom,
+  } as CSSProperties;
+}
+
+function paginateBlocks(
+  blocks: DocumentBlock[],
+  settings: PageSettings
+): DocumentBlock[][] {
+  const pages: DocumentBlock[][] = [];
+  let currentPage: DocumentBlock[] = [];
+  let currentWeight = 0;
+  const metrics = getPageMetrics(settings);
+  const pageCapacity = getPageCapacity(metrics.contentHeight);
+  const charactersPerLine = getCharactersPerLine(metrics.contentWidth);
+
+  for (const block of blocks) {
+    const weight = getBlockPageWeight(block, charactersPerLine);
+
+    if (currentPage.length > 0 && currentWeight + weight > pageCapacity) {
+      pages.push(currentPage);
+      currentPage = [];
+      currentWeight = 0;
+    }
+
+    currentPage.push(block);
+    currentWeight += weight;
+  }
+
+  if (currentPage.length > 0) {
+    pages.push(currentPage);
+  }
+
+  return pages.length > 0 ? pages : [[]];
+}
+
+function getPageCapacity(contentHeight: number): number {
+  return Math.max(10, Math.floor(contentHeight / 31));
+}
+
+function getCharactersPerLine(contentWidth: number): number {
+  return Math.max(18, Math.floor(contentWidth / 16));
+}
+
+function getBlockPageWeight(
+  block: DocumentBlock,
+  charactersPerLine: number
+): number {
+  const textLines = Math.max(1, Math.ceil(block.text.length / charactersPerLine));
+
+  if (block.type === "heading") {
+    return block.level === 1 ? textLines + 4 : textLines + 3;
+  }
+
+  return textLines + 1;
+}
+
+function formatAppliedTime(value: string): string {
+  return new Intl.DateTimeFormat("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
 function HangulShellHeader({ documentTitle }: { documentTitle: string }) {
@@ -341,36 +1298,5 @@ function HangulShellHeader({ documentTitle }: { documentTitle: string }) {
         ))}
       </div>
     </header>
-  );
-}
-
-type DocumentBlockEditorProps = {
-  block: DocumentBlock;
-  selected: boolean;
-  onSelect: () => void;
-  onChange: (text: string) => void;
-};
-
-function DocumentBlockEditor({
-  block,
-  selected,
-  onSelect,
-  onChange,
-}: DocumentBlockEditorProps) {
-  const className = [
-    "document-block",
-    block.type,
-    selected ? "selected" : "",
-  ].join(" ");
-
-  return (
-    <label className={className} onFocus={onSelect} onClick={onSelect}>
-      {block.type === "heading" ? <span>H{block.level}</span> : <span>P</span>}
-      <textarea
-        value={block.text}
-        onChange={(event) => onChange(event.target.value)}
-        rows={block.type === "heading" ? 1 : 4}
-      />
-    </label>
   );
 }
