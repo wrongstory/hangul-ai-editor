@@ -1,6 +1,8 @@
 import {
+  AlignCenter,
   AlignJustify,
   AlignLeft,
+  AlignRight,
   BarChart3,
   Bold,
   Check,
@@ -28,7 +30,7 @@ import type { LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
-import { Mark, mergeAttributes } from "@tiptap/core";
+import { Extension, Mark, mergeAttributes } from "@tiptap/core";
 import type { Editor, JSONContent } from "@tiptap/core";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import type { Node as ProseMirrorNode, Schema } from "@tiptap/pm/model";
@@ -59,7 +61,14 @@ type InlineFormattingState = {
   bold: boolean;
   italic: boolean;
   underline: boolean;
+  fontFamily: string;
+  fontSize: string;
+  textAlign: TextAlign;
 };
+
+type TextAlign = "left" | "center" | "right" | "justify";
+
+type ZoomLevel = "100%" | "125%" | "160%" | "200%";
 
 const UnderlineMark = Mark.create({
   name: "underline",
@@ -76,6 +85,59 @@ const UnderlineMark = Mark.create({
     return ["u", mergeAttributes(HTMLAttributes), 0];
   },
 });
+
+const TextStyleMark = Mark.create({
+  name: "textStyle",
+
+  addAttributes() {
+    return {
+      fontFamily: {
+        default: null,
+        parseHTML: (element) => element.style.fontFamily.replace(/['"]/g, ""),
+        renderHTML: (attributes) =>
+          attributes.fontFamily ? { style: `font-family: ${attributes.fontFamily}` } : {},
+      },
+      fontSize: {
+        default: null,
+        parseHTML: (element) => element.style.fontSize.replace("pt", ""),
+        renderHTML: (attributes) =>
+          attributes.fontSize ? { style: `font-size: ${attributes.fontSize}pt` } : {},
+      },
+    };
+  },
+
+  parseHTML() {
+    return [{ tag: "span" }];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ["span", mergeAttributes(HTMLAttributes), 0];
+  },
+});
+
+const TextAlignExtension = Extension.create({
+  name: "textAlign",
+
+  addGlobalAttributes() {
+    return [
+      {
+        types: ["paragraph", "heading"],
+        attributes: {
+          textAlign: {
+            default: "left",
+            parseHTML: (element) => element.style.textAlign || "left",
+            renderHTML: (attributes) => ({
+              style: `text-align: ${attributes.textAlign ?? "left"}`,
+            }),
+          },
+        },
+      },
+    ];
+  },
+});
+
+const defaultFontFamily = "함초롬바탕";
+const defaultFontSize = "14.0";
 
 const paperSizeOptions: Record<PaperSize, { label: string; width: number; height: number }> = {
   a4: { label: "A4", width: 820, height: 1040 },
@@ -99,7 +161,11 @@ export function App() {
     bold: false,
     italic: false,
     underline: false,
+    fontFamily: defaultFontFamily,
+    fontSize: defaultFontSize,
+    textAlign: "left",
   });
+  const [zoomLevel, setZoomLevel] = useState<ZoomLevel>("160%");
   const [pageSettings, setPageSettings] = useState<PageSettings>({
     paperSize: "a4",
     orientation: "portrait",
@@ -143,8 +209,8 @@ export function App() {
     [pageCount]
   );
   const pageStyle = useMemo(
-    () => getPageStyle(pageSettings, pageCount),
-    [pageSettings, pageCount]
+    () => getPageStyle(pageSettings, pageCount, zoomLevel),
+    [pageSettings, pageCount, zoomLevel]
   );
   const editor = useEditor({
     extensions: [
@@ -154,6 +220,8 @@ export function App() {
         },
       }),
       UnderlineMark,
+      TextStyleMark,
+      TextAlignExtension,
     ],
     content: blocksToTiptapDocument(initialDocument.blocks),
     editorProps: {
@@ -258,6 +326,13 @@ export function App() {
       bold: currentEditor.isActive("bold"),
       italic: currentEditor.isActive("italic"),
       underline: currentEditor.isActive("underline"),
+      fontFamily:
+        currentEditor.getAttributes("textStyle").fontFamily ?? defaultFontFamily,
+      fontSize: currentEditor.getAttributes("textStyle").fontSize ?? defaultFontSize,
+      textAlign: normalizeTextAlign(
+        currentEditor.getAttributes("paragraph").textAlign ??
+          currentEditor.getAttributes("heading").textAlign
+      ),
     });
   }
 
@@ -268,6 +343,33 @@ export function App() {
 
     editor.chain().focus().toggleMark(mark).run();
     syncInlineFormattingFromEditor(editor);
+  }
+
+  function updateFontFamily(fontFamily: string) {
+    if (!editor) {
+      return;
+    }
+
+    editor.chain().focus().setMark("textStyle", { fontFamily }).run();
+    setInlineFormatting((current) => ({ ...current, fontFamily }));
+  }
+
+  function updateFontSize(fontSize: string) {
+    if (!editor || !isValidFontSize(fontSize)) {
+      return;
+    }
+
+    editor.chain().focus().setMark("textStyle", { fontSize }).run();
+    setInlineFormatting((current) => ({ ...current, fontSize }));
+  }
+
+  function updateTextAlign(textAlign: TextAlign) {
+    if (!editor) {
+      return;
+    }
+
+    applyTextAlign(editor, textAlign);
+    setInlineFormatting((current) => ({ ...current, textAlign }));
   }
 
   function updateActiveBlockStyle(style: BlockStyle) {
@@ -286,6 +388,55 @@ export function App() {
     }
 
     setActiveBlockStyle(style);
+  }
+
+  function createNewDocument() {
+    const nextDocument: HangulDocument = {
+      title: "새 문서",
+      sourceFormat: "draft",
+      blocks: [
+        {
+          id: crypto.randomUUID(),
+          type: "paragraph",
+          text: "",
+        },
+      ],
+    };
+
+    setDocumentState(nextDocument);
+    setActiveBlockId(nextDocument.blocks[0].id);
+    setActiveBlockStyle("paragraph");
+    setInlineFormatting({
+      bold: false,
+      italic: false,
+      underline: false,
+      fontFamily: defaultFontFamily,
+      fontSize: defaultFontSize,
+      textAlign: "left",
+    });
+    setProposal(undefined);
+    setChangeHistory([]);
+    setFileStatus("새 문서로 시작됨");
+  }
+
+  function saveDocumentSnapshot() {
+    const payload = JSON.stringify(
+      {
+        document: documentState,
+        pageSettings,
+        savedAt: new Date().toISOString(),
+      },
+      null,
+      2
+    );
+    const blob = new Blob([payload], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${documentState.title || "hangul-document"}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setFileStatus(`${documentState.title}.json 저장됨`);
   }
 
   async function openHwpxFile(file: File | undefined) {
@@ -451,7 +602,7 @@ export function App() {
         <HangulShellHeader documentTitle={documentState.title} />
 
         <div className="quick-toolbar" aria-label="빠른 실행 도구">
-          <button type="button" title="새 문서">
+          <button type="button" title="새 문서" onClick={createNewDocument}>
             <FileText size={15} aria-hidden="true" />
           </button>
           <button
@@ -472,11 +623,11 @@ export function App() {
               void openHwpxFile(event.target.files?.[0]);
             }}
           />
-          <button type="button" title="저장">
+          <button type="button" title="저장" onClick={saveDocumentSnapshot}>
             <Save size={15} aria-hidden="true" />
           </button>
           <span className="toolbar-separator" />
-          <button type="button" title="인쇄">
+          <button type="button" title="인쇄" onClick={() => window.print()}>
             <Printer size={15} aria-hidden="true" />
           </button>
           <select
@@ -491,12 +642,28 @@ export function App() {
             <option value="heading-2">제목 2</option>
             <option value="heading-3">제목 3</option>
           </select>
-          <select aria-label="글꼴" defaultValue="함초롬바탕">
+          <select
+            aria-label="글꼴"
+            value={inlineFormatting.fontFamily}
+            onChange={(event) => updateFontFamily(event.target.value)}
+          >
             <option>함초롬바탕</option>
             <option>맑은 고딕</option>
             <option>굴림</option>
           </select>
-          <input aria-label="글자 크기" defaultValue="14.0" />
+          <input
+            aria-label="글자 크기"
+            inputMode="decimal"
+            value={inlineFormatting.fontSize}
+            onChange={(event) => {
+              const nextFontSize = event.target.value;
+              setInlineFormatting((current) => ({
+                ...current,
+                fontSize: nextFontSize,
+              }));
+              updateFontSize(nextFontSize);
+            }}
+          />
           <span className="unit-label">pt</span>
           <button
             className={inlineFormatting.bold ? "active" : ""}
@@ -525,13 +692,47 @@ export function App() {
           >
             <Underline size={15} aria-hidden="true" />
           </button>
-          <button type="button" title="왼쪽 정렬">
+          <button
+            className={inlineFormatting.textAlign === "left" ? "active" : ""}
+            type="button"
+            title="왼쪽 정렬"
+            aria-pressed={inlineFormatting.textAlign === "left"}
+            onClick={() => updateTextAlign("left")}
+          >
             <AlignLeft size={15} aria-hidden="true" />
           </button>
-          <button type="button" title="양쪽 정렬">
+          <button
+            className={inlineFormatting.textAlign === "center" ? "active" : ""}
+            type="button"
+            title="가운데 정렬"
+            aria-pressed={inlineFormatting.textAlign === "center"}
+            onClick={() => updateTextAlign("center")}
+          >
+            <AlignCenter size={15} aria-hidden="true" />
+          </button>
+          <button
+            className={inlineFormatting.textAlign === "right" ? "active" : ""}
+            type="button"
+            title="오른쪽 정렬"
+            aria-pressed={inlineFormatting.textAlign === "right"}
+            onClick={() => updateTextAlign("right")}
+          >
+            <AlignRight size={15} aria-hidden="true" />
+          </button>
+          <button
+            className={inlineFormatting.textAlign === "justify" ? "active" : ""}
+            type="button"
+            title="양쪽 정렬"
+            aria-pressed={inlineFormatting.textAlign === "justify"}
+            onClick={() => updateTextAlign("justify")}
+          >
             <AlignJustify size={15} aria-hidden="true" />
           </button>
-          <select aria-label="확대 비율" defaultValue="160%">
+          <select
+            aria-label="확대 비율"
+            value={zoomLevel}
+            onChange={(event) => setZoomLevel(event.target.value as ZoomLevel)}
+          >
             <option>100%</option>
             <option>125%</option>
             <option>160%</option>
@@ -855,6 +1056,41 @@ function normalizeHeadingLevel(value: unknown): 1 | 2 | 3 {
   return value === 1 || value === 2 || value === 3 ? value : 1;
 }
 
+function normalizeTextAlign(value: unknown): TextAlign {
+  return value === "center" || value === "right" || value === "justify"
+    ? value
+    : "left";
+}
+
+function isValidFontSize(value: string): boolean {
+  const numericValue = Number(value);
+
+  return Number.isFinite(numericValue) && numericValue >= 6 && numericValue <= 96;
+}
+
+function applyTextAlign(editor: Editor, textAlign: TextAlign) {
+  const { state, view } = editor;
+  const { from, to } = state.selection;
+  const transaction = state.tr;
+  let changed = false;
+
+  state.doc.nodesBetween(from, to, (node, position) => {
+    if (node.type.name !== "paragraph" && node.type.name !== "heading") {
+      return;
+    }
+
+    transaction.setNodeMarkup(position, undefined, {
+      ...node.attrs,
+      textAlign,
+    });
+    changed = true;
+  });
+
+  if (changed) {
+    view.dispatch(transaction.scrollIntoView());
+  }
+}
+
 function getEditorSelectionBlockIndex(editor: Editor): number {
   return Math.max(0, editor.state.selection.$from.index(0));
 }
@@ -880,10 +1116,15 @@ function getPageMetrics(settings: PageSettings) {
   };
 }
 
-function getPageStyle(settings: PageSettings, pageCount: number): CSSProperties {
+function getPageStyle(
+  settings: PageSettings,
+  pageCount: number,
+  zoomLevel: ZoomLevel
+): CSSProperties {
   const metrics = getPageMetrics(settings);
   const pageGap = 34;
   const columnGap = pageGap + metrics.marginX * 2;
+  const zoom = Number(zoomLevel.replace("%", "")) / 100;
 
   return {
     "--page-width": `${metrics.width}px`,
@@ -900,6 +1141,7 @@ function getPageStyle(settings: PageSettings, pageCount: number): CSSProperties 
     "--paged-content-width": `${
       metrics.contentWidth * pageCount + columnGap * (pageCount - 1)
     }px`,
+    "--editor-zoom": zoom,
   } as CSSProperties;
 }
 

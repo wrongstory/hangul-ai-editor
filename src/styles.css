@@ -290,6 +290,7 @@ textarea {
   width: var(--paged-strip-width, var(--page-width, 820px));
   min-width: var(--paged-strip-width, var(--page-width, 820px));
   margin: 0 auto;
+  zoom: var(--editor-zoom, 1);
 }
 
 .page-sheet {
@@ -434,12 +435,44 @@ textarea {
   font-size: 17px;
 }
 
+.tiptap-document strong {
+  font-weight: 800;
+}
+
+.tiptap-document em {
+  font-style: italic;
+}
+
+.tiptap-document u {
+  text-underline-offset: 0.16em;
+}
+
 .tiptap-document .is-empty::before {
   float: left;
   height: 0;
   color: #a4aaa7;
   content: " ";
   pointer-events: none;
+}
+
+@media print {
+  .hangul-shell-header,
+  .quick-toolbar,
+  .ruler,
+  .ai-sidebar {
+    display: none;
+  }
+
+  .app-shell {
+    display: block;
+  }
+
+  .document-pane,
+  .document-workbench {
+    height: auto;
+    overflow: visible;
+    background: #ffffff;
+  }
 }
 
 .page-footer {
